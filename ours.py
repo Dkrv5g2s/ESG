@@ -54,6 +54,20 @@ FIELD_WEIGHTS = {
     "evidence_quality": 0.35,
 }
 
+TASK_REPORT_ORDER = [
+    "promise_status",
+    "evidence_status",
+    "evidence_quality",
+    "verification_timeline",
+]
+
+TASK_DISPLAY_NAMES = {
+    "promise_status": "Commitment Classification",
+    "evidence_status": "Evidence Identification",
+    "evidence_quality": "Clarity Classification",
+    "verification_timeline": "Timeline Classification",
+}
+
 DEFAULT_PREDICTIONS = {
     "promise_status": "No",
     "verification_timeline": "N/A",
@@ -205,6 +219,10 @@ def resolve_device(device_name: str):
 
 def uses_cuda(device) -> bool:
     return getattr(device, "type", str(device)) == "cuda"
+
+
+def format_task_name(field: str) -> str:
+    return TASK_DISPLAY_NAMES[field]
 
 
 def require_training_labels(rows: list[dict[str, Any]]) -> None:
@@ -551,8 +569,8 @@ def train_and_predict(
         scores = evaluate_predictions(valid_split, valid_predictions)
         score = scores["final_weighted_score"]
         print(f"  validation weighted macro F1={score:.5f}")
-        for field in EVAL_FIELDS:
-            print(f"    {field}: {scores[field]:.5f}")
+        for field in TASK_REPORT_ORDER:
+            print(f"    {format_task_name(field)}: {scores[field]:.5f}")
 
         if score > best_score + min_delta:
             best_score = score

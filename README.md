@@ -35,6 +35,17 @@ AICUP/
 | `baseline_reference.py` | 官方 baseline notebook 對應的 Python 版，對照 `docs/baseline_reference.ipynb` |
 | `ours.py` | 改良版訓練流程與模型架構 |
 
+## 子任務與欄位對照
+
+官方評分分成四個子任務；程式與繳交檔仍須使用官方資料集指定欄位名稱，不能改成子任務英文名。
+
+| 官方子任務 | 程式與繳交欄位 | 權重 | 類別 |
+| --- | --- | --- | --- |
+| Commitment Classification | `promise_status` | 20% | `Yes`、`No` |
+| Evidence Identification | `evidence_status` | 30% | `Yes`、`No`、`N/A` |
+| Clarity Classification | `evidence_quality` | 35% | `Clear`、`Not Clear`、`Misleading`、`N/A` |
+| Timeline Classification | `verification_timeline` | 15% | `already`、`within_2_years`、`between_2_and_5_years`、`more_than_5_years`、`N/A` |
+
 ## 環境安裝
 
 建議使用 Conda 建立獨立環境。PyTorch 官方目前主要提供 pip wheel 安裝指令；因此本專案使用 Conda 管理 Python 與資料科學套件，並在 Conda 環境內用 pip 安裝 CUDA 12.8 版 PyTorch。

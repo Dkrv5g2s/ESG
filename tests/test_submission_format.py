@@ -16,7 +16,9 @@ from baseline_reference import (  # noqa: E402
     SUBMISSION_COLUMNS,
     build_submission_rows,
     default_target_path,
+    format_task_name,
     resolve_device,
+    TASK_REPORT_ORDER,
     write_submission_csv,
 )
 from ours import build_class_weights, build_stratify_labels  # noqa: E402
@@ -43,6 +45,17 @@ class FakeTorch:
 
 
 class SubmissionFormatTest(unittest.TestCase):
+    def test_training_report_uses_official_task_names_in_official_order(self):
+        self.assertEqual(
+            [(field, format_task_name(field)) for field in TASK_REPORT_ORDER],
+            [
+                ("promise_status", "Commitment Classification"),
+                ("evidence_status", "Evidence Identification"),
+                ("evidence_quality", "Clarity Classification"),
+                ("verification_timeline", "Timeline Classification"),
+            ],
+        )
+
     def test_build_class_weights_gives_larger_weight_to_rare_labels(self):
         rows = [
             {"promise_status": "Yes"},
