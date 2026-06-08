@@ -23,6 +23,19 @@ AICUP/
    └─ baseline_reference.ipynb
 ```
 
+## 資料下載
+
+執行程式前，請先到 [AIdea VeriPromise ESG 2026 競賽頁面](https://www.aidea-web.tw/topic/ec993d30-204c-421a-acd4-ed12d719be78?focus=intro) 下載驗證資料集。
+
+下載後請將驗證資料放在專案根目錄，預設檔名如下：
+
+```text
+vpesg4k_val_1000.json
+vpesg4k_val_1000.csv
+```
+
+本專案預設優先讀取 `vpesg4k_val_1000.json`；若沒有 JSON 檔，才會改讀 `vpesg4k_val_1000.csv`。
+
 ## 環境安裝
 
 建議使用 Python 3.10 以上版本。
@@ -39,7 +52,7 @@ pip install -r requirements.txt
 
 ## 產生繳交檔
 
-直接執行以下指令，會讀取根目錄的 `vpesg4k_val_1000.json`，產生 `outputs/submission.csv`。
+確認根目錄已有驗證資料後，直接執行以下指令，會讀取 `vpesg4k_val_1000.json` 並產生 `outputs/submission.csv`。
 
 ```powershell
 python predict_submission.py
