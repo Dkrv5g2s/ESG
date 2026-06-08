@@ -9,8 +9,7 @@ from pathlib import Path
 from typing import Any
 
 
-PACKAGE_ROOT = Path(__file__).resolve().parent
-PROJECT_ROOT = PACKAGE_ROOT.parent
+PROJECT_ROOT = Path(__file__).resolve().parent
 
 TRAIN_DATA_URL = (
     "https://raw.githubusercontent.com/veripromiseesg/veripromiseesgdataset/"
@@ -506,9 +505,9 @@ def parse_args() -> argparse.Namespace:
         description="Create an AI CUP VeriPromiseESG submission CSV."
     )
     parser.add_argument("--target", type=Path, default=default_target_path())
-    parser.add_argument("--output", type=Path, default=PACKAGE_ROOT / "outputs" / "submission.csv")
-    parser.add_argument("--train-data", type=Path, default=PACKAGE_ROOT / "data" / "vpesg4k_train_1000.json")
-    parser.add_argument("--model-path", type=Path, default=PACKAGE_ROOT / "models" / "best_model.pt")
+    parser.add_argument("--output", type=Path, default=PROJECT_ROOT / "outputs" / "submission.csv")
+    parser.add_argument("--train-data", type=Path, default=PROJECT_ROOT / "data" / "vpesg4k_train_1000.json")
+    parser.add_argument("--model-path", type=Path, default=PROJECT_ROOT / "models" / "best_model.pt")
     parser.add_argument("--model-name", default="bert-base-chinese")
     parser.add_argument("--max-len", type=int, default=256)
     parser.add_argument("--batch-size", type=int, default=8)

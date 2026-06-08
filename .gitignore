@@ -32,8 +32,8 @@ desktop.ini
 .vscode/
 
 # Model checkpoints and downloaded training data
-submission_package/models/
-submission_package/data/
+models/
+data/
 *.pt
 *.pth
 *.ckpt
