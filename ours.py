@@ -662,7 +662,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--target", type=Path, default=default_target_path())
     parser.add_argument("--output", type=Path, default=PROJECT_ROOT / "outputs" / "submission.csv")
     parser.add_argument("--train-data", type=Path, default=PROJECT_ROOT / "data" / "vpesg4k_train_1000.json")
-    parser.add_argument("--model-path", type=Path, default=PROJECT_ROOT / "models" / "best_model.pt")
+    parser.add_argument("--model-path", type=Path, default=PROJECT_ROOT / "models" / "ours.pt")
     parser.add_argument("--model-name", default="hfl/chinese-roberta-wwm-ext")
     parser.add_argument("--max-len", type=int, default=256)
     parser.add_argument("--batch-size", type=int, default=8)
@@ -680,33 +680,30 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
     parser.add_argument(
-        "--check-gpu",
-        action="store_true",
-        help="Print PyTorch CUDA diagnostics and exit.",
-    )
-    parser.add_argument("--train", action="store_true", help="Train a model before prediction.")
-    parser.add_argument(
-        "--predict-with-model",
-        action="store_true",
-        help="Predict with an existing checkpoint instead of training.",
-    )
-    parser.add_argument(
         "--no-download-train",
         action="store_true",
-        help="Do not download training data automatically when --train is used.",
+        help="Do not download training data automatically when the checkpoint does not exist.",
     )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    if args.check_gpu:
-        print(format_torch_cuda_report())
-        return
-
     target_rows = load_rows(args.target)
 
-    if args.train:
+    if args.model_path.exists():
+        print(f"Found model checkpoint: {args.model_path}")
+        predictions = predict_with_checkpoint(
+            target_rows,
+            model_path=args.model_path,
+            model_name=args.model_name,
+            max_len=args.max_len,
+            batch_size=args.batch_size,
+            device_name=args.device,
+        )
+    else:
+        print(f"Model checkpoint not found: {args.model_path}")
+        print("Training a new model, then generating the submission CSV.")
         if not args.no_download_train:
             download_train_data(args.train_data)
         train_rows = load_rows(args.train_data)
@@ -731,21 +728,6 @@ def main() -> None:
             pooling=args.pooling,
             use_class_weights=not args.no_class_weights,
         )
-    elif args.predict_with_model:
-        predictions = predict_with_checkpoint(
-            target_rows,
-            model_path=args.model_path,
-            model_name=args.model_name,
-            max_len=args.max_len,
-            batch_size=args.batch_size,
-            device_name=args.device,
-        )
-    else:
-        print(
-            "No model mode selected; using labels already present in the target file "
-            "and filling missing labels with safe defaults."
-        )
-        predictions = copy_existing_or_default_predictions(target_rows)
 
     submission_rows = build_submission_rows(target_rows, predictions)
     write_submission_csv(submission_rows, args.output)

@@ -11,6 +11,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+import baseline_reference  # noqa: E402
 from baseline_reference import (  # noqa: E402
     SUBMISSION_COLUMNS,
     build_submission_rows,
@@ -161,6 +162,107 @@ class SubmissionFormatTest(unittest.TestCase):
         decoded = raw.decode("utf-8")
         header = next(csv.reader(io.StringIO(decoded)))
         self.assertEqual(header, SUBMISSION_COLUMNS)
+
+    def test_main_uses_existing_checkpoint_without_training(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            target_path = tmp_path / "target.json"
+            output_path = tmp_path / "submission.csv"
+            model_path = tmp_path / "model.pt"
+            target_path.write_text('[{"id": "11001", "data": "測試文字"}]', encoding="utf-8")
+            model_path.write_bytes(b"placeholder")
+
+            argv = [
+                "baseline_reference.py",
+                "--target",
+                str(target_path),
+                "--output",
+                str(output_path),
+                "--model-path",
+                str(model_path),
+            ]
+            predictions = [
+                {
+                    "promise_status": "No",
+                    "verification_timeline": "N/A",
+                    "evidence_status": "N/A",
+                    "evidence_quality": "N/A",
+                }
+            ]
+
+            with patch.object(sys, "argv", argv), patch.object(
+                baseline_reference,
+                "predict_with_checkpoint",
+                return_value=predictions,
+            ) as predict_mock, patch.object(
+                baseline_reference,
+                "train_and_predict",
+            ) as train_mock:
+                baseline_reference.main()
+
+            predict_mock.assert_called_once()
+            train_mock.assert_not_called()
+            self.assertTrue(output_path.exists())
+
+    def test_main_trains_when_checkpoint_is_missing(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            target_path = tmp_path / "target.json"
+            train_path = tmp_path / "train.json"
+            output_path = tmp_path / "submission.csv"
+            model_path = tmp_path / "missing-model.pt"
+            target_path.write_text('[{"id": "11001", "data": "測試文字"}]', encoding="utf-8")
+            train_path.write_text(
+                """[
+                    {
+                        "id": "1",
+                        "data": "訓練文字",
+                        "promise_status": "No",
+                        "verification_timeline": "N/A",
+                        "evidence_status": "N/A",
+                        "evidence_quality": "N/A"
+                    }
+                ]""",
+                encoding="utf-8",
+            )
+
+            argv = [
+                "baseline_reference.py",
+                "--target",
+                str(target_path),
+                "--train-data",
+                str(train_path),
+                "--output",
+                str(output_path),
+                "--model-path",
+                str(model_path),
+            ]
+            predictions = [
+                {
+                    "promise_status": "No",
+                    "verification_timeline": "N/A",
+                    "evidence_status": "N/A",
+                    "evidence_quality": "N/A",
+                }
+            ]
+
+            with patch.object(sys, "argv", argv), patch.object(
+                baseline_reference,
+                "download_train_data",
+            ) as download_mock, patch.object(
+                baseline_reference,
+                "train_and_predict",
+                return_value=predictions,
+            ) as train_mock, patch.object(
+                baseline_reference,
+                "predict_with_checkpoint",
+            ) as predict_mock:
+                baseline_reference.main()
+
+            download_mock.assert_called_once_with(train_path)
+            train_mock.assert_called_once()
+            predict_mock.assert_not_called()
+            self.assertTrue(output_path.exists())
 
 
 if __name__ == "__main__":

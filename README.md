@@ -78,57 +78,35 @@ conda deactivate
 
 ## 產生繳交檔
 
-確認 `data/` 內已有驗證資料後，直接執行以下指令，會優先讀取 `data/vpesg4k_val_1000.json` 並產生 `outputs/submission.csv`。
+確認 `data/` 內已有訓練資料與官方驗證資料後，直接執行以下指令。程式會優先讀取 `data/vpesg4k_val_1000.json`，並產生 `outputs/submission.csv`。
 
 ```powershell
 conda activate aicup-esg
 python baseline_reference.py
 ```
 
-未指定模型模式時，程式會沿用輸入資料中已存在的標籤欄位；若欄位缺值或內容不在允許標籤內，會填入保守預設值。這個模式主要用來快速確認輸出格式。
+執行時會自動判斷權重檔是否存在：
 
-## 重新訓練原始 Baseline
+- 有 `models/baseline_reference.pt` 時，直接讀取模型並產生繳交檔。
+- 沒有 `models/baseline_reference.pt` 時，先用 `data/vpesg4k_train_1000.json` 訓練，再產生繳交檔。
 
-```powershell
-conda activate aicup-esg
-python baseline_reference.py --train
-```
+`baseline_reference.py` 是官方 baseline notebook 對應的 Python 版，使用 `bert-base-chinese`，權重預設儲存到 `models/baseline_reference.pt`。
 
-預設會自動下載官方公開訓練資料到 `data/vpesg4k_train_1000.json`，使用 `bert-base-chinese` 訓練多任務分類模型，並把權重儲存到 `models/best_model.pt`。
-
-常用參數：
+## 執行改良版
 
 ```powershell
 conda activate aicup-esg
-python baseline_reference.py --train --epochs 3 --batch-size 16
+python ours.py
 ```
 
-程式預設會自動選擇可用裝置；有 CUDA GPU 時會使用 GPU，否則會退回 CPU。若使用 RTX 4090，可視 GPU 記憶體把 `--batch-size` 從 16 調到 32 或更高；若發生記憶體不足，再往下調整。
+改良版位於 `ours.py`，預設會使用 `hfl/chinese-roberta-wwm-ext`、類別權重、分層切分、early stopping、weight decay、warmup ratio，以及較強的多層分類頭。權重預設儲存到 `models/ours.pt`。
 
-## 重新訓練改良版
+執行邏輯同樣是：
 
-改良版位於 `ours.py`，預設會使用 `hfl/chinese-roberta-wwm-ext`、類別權重、分層切分、early stopping、weight decay、warmup ratio，以及較強的多層分類頭。若想微調分數，可從以下參數開始：
+- 有 `models/ours.pt` 時，直接讀取模型並產生繳交檔。
+- 沒有 `models/ours.pt` 時，先用 `data/vpesg4k_train_1000.json` 訓練，再產生繳交檔。
 
-```powershell
-conda activate aicup-esg
-python ours.py --train --epochs 8 --batch-size 32 --learning-rate 2e-5 --dropout-rate 0.2 --early-stopping-patience 3
-```
-
-## 使用既有權重預測
-
-已經有 `models/best_model.pt` 時，可直接讀取權重產生繳交檔。
-
-```powershell
-conda activate aicup-esg
-python baseline_reference.py --predict-with-model
-```
-
-也可以指定資料、輸出位置與模型權重：
-
-```powershell
-conda activate aicup-esg
-python baseline_reference.py --predict-with-model --target data/vpesg4k_val_1000.csv --output outputs/submission.csv --model-path models/best_model.pt
-```
+程式預設會自動選擇可用裝置；有 CUDA GPU 時會使用 GPU，否則會退回 CPU。若使用 RTX 4090，可視 GPU 記憶體把 `--batch-size` 從 8 調到 16、32 或更高；若發生記憶體不足，再往下調整。
 
 ## 主要參數
 
@@ -137,7 +115,7 @@ python baseline_reference.py --predict-with-model --target data/vpesg4k_val_1000
 | `--target` | `data/vpesg4k_val_1000.json` | 要預測的 CSV 或 JSON 資料 |
 | `--output` | `outputs/submission.csv` | 繳交檔輸出位置 |
 | `--train-data` | `data/vpesg4k_train_1000.json` | 訓練資料位置 |
-| `--model-path` | `models/best_model.pt` | 模型權重儲存或讀取位置 |
+| `--model-path` | `models/baseline_reference.pt` 或 `models/ours.pt` | 模型權重儲存或讀取位置 |
 | `--model-name` | `bert-base-chinese` | Hugging Face 預訓練模型名稱；改良版預設為 `hfl/chinese-roberta-wwm-ext` |
 | `--max-len` | `256` | Tokenizer 最大長度 |
 | `--batch-size` | `8` | 批次大小 |
