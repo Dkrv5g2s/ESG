@@ -5,6 +5,7 @@ import csv
 import json
 import random
 import urllib.request
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -219,6 +220,32 @@ def require_training_labels(rows: list[dict[str, Any]]) -> None:
         raise ValueError(f"Training data contains missing or unknown labels: {preview}")
 
 
+def build_class_weights(
+    rows: list[dict[str, Any]],
+    field: str,
+    label2id: dict[str, int],
+) -> list[float]:
+    counts = Counter(row[field] for row in rows)
+    total = sum(counts.values())
+    label_count = len(label2id)
+    weights = [0.0] * label_count
+    for label, index in label2id.items():
+        count = counts.get(label, 0)
+        weights[index] = total / (label_count * count) if count else 0.0
+    return weights
+
+
+def build_stratify_labels(rows: list[dict[str, Any]]) -> list[str] | None:
+    labels = [
+        "|".join(normalize_value(row.get(field, "")) for field in EVAL_FIELDS)
+        for row in rows
+    ]
+    counts = Counter(labels)
+    if labels and min(counts.values()) >= 2:
+        return labels
+    return None
+
+
 def make_dataset_class(max_len: int):
     import torch
     from torch.utils.data import Dataset
@@ -271,26 +298,43 @@ def collate_batch(batch):
     return output
 
 
-def make_model_class(model_name: str):
+def make_model_class(model_name: str, pooling: str):
     import torch
     from transformers import AutoModel
 
     class MultiTaskClassifier(torch.nn.Module):
-        def __init__(self, num_labels: dict[str, int], dropout_rate: float = 0.1):
+        def __init__(
+            self,
+            num_labels: dict[str, int],
+            dropout_rate: float = 0.2,
+            head_hidden_size: int = 256,
+        ):
             super().__init__()
             self.encoder = AutoModel.from_pretrained(model_name)
             hidden_size = self.encoder.config.hidden_size
             self.dropout = torch.nn.Dropout(dropout_rate)
-            self.classifiers = torch.nn.ModuleDict(
-                {
-                    field: torch.nn.Linear(hidden_size, label_count)
-                    for field, label_count in num_labels.items()
-                }
-            )
+            classifiers = {}
+            for field, label_count in num_labels.items():
+                if head_hidden_size > 0:
+                    classifiers[field] = torch.nn.Sequential(
+                        torch.nn.Linear(hidden_size, head_hidden_size),
+                        torch.nn.GELU(),
+                        torch.nn.LayerNorm(head_hidden_size),
+                        torch.nn.Dropout(dropout_rate),
+                        torch.nn.Linear(head_hidden_size, label_count),
+                    )
+                else:
+                    classifiers[field] = torch.nn.Linear(hidden_size, label_count)
+            self.classifiers = torch.nn.ModuleDict(classifiers)
 
         def forward(self, input_ids, attention_mask):
             outputs = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
-            pooled = getattr(outputs, "pooler_output", None)
+            if pooling == "mean":
+                mask = attention_mask.unsqueeze(-1).type_as(outputs.last_hidden_state)
+                pooled = (outputs.last_hidden_state * mask).sum(dim=1)
+                pooled = pooled / mask.sum(dim=1).clamp(min=1e-9)
+            else:
+                pooled = getattr(outputs, "pooler_output", None)
             if pooled is None:
                 pooled = outputs.last_hidden_state[:, 0]
             pooled = self.dropout(pooled)
@@ -302,11 +346,26 @@ def make_model_class(model_name: str):
     return MultiTaskClassifier
 
 
-def train_one_epoch(model, dataloader, optimizer, scheduler, device) -> float:
+def make_loss_functions(train_rows, label2id, device, use_class_weights: bool):
+    import torch
+
+    losses = {}
+    for field in EVAL_FIELDS:
+        weight = None
+        if use_class_weights:
+            weight = torch.tensor(
+                build_class_weights(train_rows, field, label2id[field]),
+                dtype=torch.float,
+                device=device,
+            )
+        losses[field] = torch.nn.CrossEntropyLoss(weight=weight)
+    return losses
+
+
+def train_one_epoch(model, dataloader, optimizer, scheduler, device, losses) -> float:
     import torch
 
     model.train()
-    criterion = torch.nn.CrossEntropyLoss()
     total_loss = 0.0
 
     for step, batch in enumerate(dataloader, start=1):
@@ -319,7 +378,10 @@ def train_one_epoch(model, dataloader, optimizer, scheduler, device) -> float:
         }
 
         logits = model(input_ids=input_ids, attention_mask=attention_mask)
-        loss = sum(criterion(logits[field], labels[field]) for field in EVAL_FIELDS)
+        loss = sum(
+            losses[field](logits[field], labels[field]) * FIELD_WEIGHTS[field]
+            for field in EVAL_FIELDS
+        )
 
         optimizer.zero_grad()
         loss.backward()
@@ -388,6 +450,14 @@ def train_and_predict(
     validation_size: float,
     seed: int,
     device_name: str,
+    dropout_rate: float,
+    head_hidden_size: int,
+    weight_decay: float,
+    warmup_ratio: float,
+    early_stopping_patience: int,
+    min_delta: float,
+    pooling: str,
+    use_class_weights: bool,
 ):
     import torch
     from sklearn.model_selection import train_test_split
@@ -401,17 +471,27 @@ def train_and_predict(
     num_labels = {field: len(labels) for field, labels in EVAL_FIELDS.items()}
 
     if validation_size > 0:
-        train_split, valid_split = train_test_split(
-            train_rows,
-            test_size=validation_size,
-            random_state=seed,
-        )
+        stratify_labels = build_stratify_labels(train_rows)
+        try:
+            train_split, valid_split = train_test_split(
+                train_rows,
+                test_size=validation_size,
+                random_state=seed,
+                stratify=stratify_labels,
+            )
+        except ValueError as exc:
+            print(f"Stratified split unavailable; using random split. Reason: {exc}")
+            train_split, valid_split = train_test_split(
+                train_rows,
+                test_size=validation_size,
+                random_state=seed,
+            )
     else:
         train_split, valid_split = train_rows, []
 
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     ESGDataset = make_dataset_class(max_len)
-    MultiTaskClassifier = make_model_class(model_name)
+    MultiTaskClassifier = make_model_class(model_name, pooling)
 
     train_loader = DataLoader(
         ESGDataset(train_split, tokenizer, label2id),
@@ -430,27 +510,41 @@ def train_and_predict(
             pin_memory=uses_cuda(device),
         )
 
-    model = MultiTaskClassifier(num_labels).to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+    model = MultiTaskClassifier(
+        num_labels,
+        dropout_rate=dropout_rate,
+        head_hidden_size=head_hidden_size,
+    ).to(device)
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=learning_rate,
+        weight_decay=weight_decay,
+    )
     total_steps = len(train_loader) * epochs
     scheduler = get_linear_schedule_with_warmup(
         optimizer,
-        num_warmup_steps=int(total_steps * 0.1),
+        num_warmup_steps=int(total_steps * warmup_ratio),
         num_training_steps=total_steps,
     )
+    losses = make_loss_functions(train_split, label2id, device, use_class_weights)
 
     best_score = -1.0
     best_state = None
+    epochs_without_improvement = 0
     print(f"Device: {device}")
     print(f"Train rows: {len(train_split)}; validation rows: {len(valid_split)}")
+    print(f"Model: {model_name}; pooling: {pooling}; class weights: {use_class_weights}")
 
     for epoch in range(1, epochs + 1):
         print(f"Epoch {epoch}/{epochs}")
-        avg_loss = train_one_epoch(model, train_loader, optimizer, scheduler, device)
+        avg_loss = train_one_epoch(model, train_loader, optimizer, scheduler, device, losses)
         print(f"  average loss={avg_loss:.4f}")
 
         if valid_loader is None:
-            best_state = model.state_dict()
+            best_state = {
+                key: value.detach().cpu().clone()
+                for key, value in model.state_dict().items()
+            }
             continue
 
         valid_predictions = predict_batches(model, valid_loader, device, id2label)
@@ -460,13 +554,22 @@ def train_and_predict(
         for field in EVAL_FIELDS:
             print(f"    {field}: {scores[field]:.5f}")
 
-        if score > best_score:
+        if score > best_score + min_delta:
             best_score = score
             best_state = {
                 key: value.detach().cpu().clone()
                 for key, value in model.state_dict().items()
             }
+            epochs_without_improvement = 0
             print(f"  saved best checkpoint in memory: {best_score:.5f}")
+        else:
+            epochs_without_improvement += 1
+            if early_stopping_patience > 0 and epochs_without_improvement >= early_stopping_patience:
+                print(
+                    "  early stopping: validation score did not improve for "
+                    f"{early_stopping_patience} epochs"
+                )
+                break
 
     if best_state is not None:
         model.load_state_dict(best_state)
@@ -478,6 +581,9 @@ def train_and_predict(
             "model_name": model_name,
             "max_len": max_len,
             "num_labels": num_labels,
+            "dropout_rate": dropout_rate,
+            "head_hidden_size": head_hidden_size,
+            "pooling": pooling,
         },
         model_path,
     )
@@ -510,13 +616,20 @@ def predict_with_checkpoint(
     checkpoint = torch.load(model_path, map_location=device)
     checkpoint_model_name = checkpoint.get("model_name", model_name)
     checkpoint_max_len = int(checkpoint.get("max_len", max_len))
+    checkpoint_dropout_rate = float(checkpoint.get("dropout_rate", 0.2))
+    checkpoint_head_hidden_size = int(checkpoint.get("head_hidden_size", 0))
+    checkpoint_pooling = checkpoint.get("pooling", "cls")
 
     _, id2label = build_label_maps()
     num_labels = {field: len(labels) for field, labels in EVAL_FIELDS.items()}
     tokenizer = AutoTokenizer.from_pretrained(checkpoint_model_name)
     ESGDataset = make_dataset_class(checkpoint_max_len)
-    MultiTaskClassifier = make_model_class(checkpoint_model_name)
-    model = MultiTaskClassifier(num_labels).to(device)
+    MultiTaskClassifier = make_model_class(checkpoint_model_name, checkpoint_pooling)
+    model = MultiTaskClassifier(
+        num_labels,
+        dropout_rate=checkpoint_dropout_rate,
+        head_hidden_size=checkpoint_head_hidden_size,
+    ).to(device)
     model.load_state_dict(checkpoint["model_state_dict"])
 
     dataloader = DataLoader(
@@ -529,12 +642,17 @@ def predict_with_checkpoint(
     return predict_batches(model, dataloader, device, id2label)
 
 
-def default_target_path() -> Path:
-    json_path = PROJECT_ROOT / "vpesg4k_val_1000.json"
-    csv_path = PROJECT_ROOT / "vpesg4k_val_1000.csv"
-    if json_path.exists():
-        return json_path
-    return csv_path
+def default_target_path(project_root: Path = PROJECT_ROOT) -> Path:
+    candidates = [
+        project_root / "data" / "vpesg4k_val_1000.json",
+        project_root / "data" / "vpesg4k_val_1000.csv",
+        project_root / "vpesg4k_val_1000.json",
+        project_root / "vpesg4k_val_1000.csv",
+    ]
+    for path in candidates:
+        if path.exists():
+            return path
+    return candidates[0]
 
 
 def parse_args() -> argparse.Namespace:
@@ -545,12 +663,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", type=Path, default=PROJECT_ROOT / "outputs" / "submission.csv")
     parser.add_argument("--train-data", type=Path, default=PROJECT_ROOT / "data" / "vpesg4k_train_1000.json")
     parser.add_argument("--model-path", type=Path, default=PROJECT_ROOT / "models" / "best_model.pt")
-    parser.add_argument("--model-name", default="bert-base-chinese")
+    parser.add_argument("--model-name", default="hfl/chinese-roberta-wwm-ext")
     parser.add_argument("--max-len", type=int, default=256)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--learning-rate", type=float, default=2e-5)
+    parser.add_argument("--weight-decay", type=float, default=0.01)
+    parser.add_argument("--warmup-ratio", type=float, default=0.1)
     parser.add_argument("--validation-size", type=float, default=0.2)
+    parser.add_argument("--dropout-rate", type=float, default=0.2)
+    parser.add_argument("--head-hidden-size", type=int, default=256)
+    parser.add_argument("--early-stopping-patience", type=int, default=3)
+    parser.add_argument("--min-delta", type=float, default=0.0)
+    parser.add_argument("--pooling", default="cls", choices=["cls", "mean"])
+    parser.add_argument("--no-class-weights", action="store_true")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
     parser.add_argument(
@@ -596,6 +722,14 @@ def main() -> None:
             validation_size=args.validation_size,
             seed=args.seed,
             device_name=args.device,
+            dropout_rate=args.dropout_rate,
+            head_hidden_size=args.head_hidden_size,
+            weight_decay=args.weight_decay,
+            warmup_ratio=args.warmup_ratio,
+            early_stopping_patience=args.early_stopping_patience,
+            min_delta=args.min_delta,
+            pooling=args.pooling,
+            use_class_weights=not args.no_class_weights,
         )
     elif args.predict_with_model:
         predictions = predict_with_checkpoint(

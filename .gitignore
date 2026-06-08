@@ -32,9 +32,8 @@ desktop.ini
 .idea/
 .vscode/
 
-# Model checkpoints and downloaded training data
+# Model checkpoints
 models/
-data/
 *.pt
 *.pth
 *.ckpt

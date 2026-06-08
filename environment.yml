@@ -13,3 +13,4 @@ dependencies:
       - --extra-index-url https://download.pytorch.org/whl/cu128
       - torch==2.8.0+cu128
       - transformers>=4.41,<5
+      - hf_xet>=1.1,<2
