@@ -10,6 +10,8 @@ AICUP/
 ├─ environment.yml
 ├─ requirements.txt
 ├─ predict_submission.py
+├─ baseline_reference.py
+├─ ours.py
 ├─ data/
 │  ├─ vpesg4k_val_1000.csv
 │  └─ vpesg4k_val_1000.json
@@ -25,6 +27,14 @@ AICUP/
    └─ baseline_reference.ipynb
 ```
 
+
+## 程式版本
+
+| 檔案 | 用途 |
+| --- | --- |
+| `predict_submission.py` | 原始 baseline 入口 |
+| `baseline_reference.py` | 官方 baseline notebook 對應的 Python 版，對照 `docs/baseline_reference.ipynb` |
+| `ours.py` | 改良版訓練流程與模型架構 |
 
 ## 環境安裝
 
@@ -78,14 +88,14 @@ python predict_submission.py
 
 未指定模型模式時，程式會沿用輸入資料中已存在的標籤欄位；若欄位缺值或內容不在允許標籤內，會填入保守預設值。這個模式主要用來快速確認輸出格式。
 
-## 重新訓練 Baseline
+## 重新訓練原始 Baseline
 
 ```powershell
 conda activate aicup-esg
 python predict_submission.py --train
 ```
 
-預設會自動下載官方公開訓練資料到 `data/vpesg4k_train_1000.json`，使用 `hfl/chinese-roberta-wwm-ext` 訓練多任務分類模型，並把權重儲存到 `models/best_model.pt`。
+預設會自動下載官方公開訓練資料到 `data/vpesg4k_train_1000.json`，使用 `bert-base-chinese` 訓練多任務分類模型，並把權重儲存到 `models/best_model.pt`。
 
 常用參數：
 
@@ -96,10 +106,13 @@ python predict_submission.py --train --epochs 3 --batch-size 16
 
 程式預設會自動選擇可用裝置；有 CUDA GPU 時會使用 GPU，否則會退回 CPU。若使用 RTX 4090，可視 GPU 記憶體把 `--batch-size` 從 16 調到 32 或更高；若發生記憶體不足，再往下調整。
 
-改良版訓練預設會使用類別權重、分層切分、early stopping、weight decay、warmup ratio，以及較強的多層分類頭。若想微調分數，可從以下參數開始：
+## 重新訓練改良版
+
+改良版位於 `ours.py`，預設會使用 `hfl/chinese-roberta-wwm-ext`、類別權重、分層切分、early stopping、weight decay、warmup ratio，以及較強的多層分類頭。若想微調分數，可從以下參數開始：
 
 ```powershell
-python predict_submission.py --train --epochs 8 --batch-size 32 --learning-rate 2e-5 --dropout-rate 0.2 --early-stopping-patience 3
+conda activate aicup-esg
+python ours.py --train --epochs 8 --batch-size 32 --learning-rate 2e-5 --dropout-rate 0.2 --early-stopping-patience 3
 ```
 
 ## 使用既有權重預測
@@ -126,7 +139,7 @@ python predict_submission.py --predict-with-model --target data/vpesg4k_val_1000
 | `--output` | `outputs/submission.csv` | 繳交檔輸出位置 |
 | `--train-data` | `data/vpesg4k_train_1000.json` | 訓練資料位置 |
 | `--model-path` | `models/best_model.pt` | 模型權重儲存或讀取位置 |
-| `--model-name` | `hfl/chinese-roberta-wwm-ext` | Hugging Face 預訓練模型名稱 |
+| `--model-name` | `bert-base-chinese` | Hugging Face 預訓練模型名稱；改良版預設為 `hfl/chinese-roberta-wwm-ext` |
 | `--max-len` | `256` | Tokenizer 最大長度 |
 | `--batch-size` | `8` | 批次大小 |
 | `--epochs` | `10` | 訓練回合數 |

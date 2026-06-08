@@ -13,13 +13,12 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from predict_submission import (  # noqa: E402
     SUBMISSION_COLUMNS,
-    build_class_weights,
-    build_stratify_labels,
     build_submission_rows,
     default_target_path,
     resolve_device,
     write_submission_csv,
 )
+from ours import build_class_weights, build_stratify_labels  # noqa: E402
 
 
 class FakeCuda:
