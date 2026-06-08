@@ -529,12 +529,17 @@ def predict_with_checkpoint(
     return predict_batches(model, dataloader, device, id2label)
 
 
-def default_target_path() -> Path:
-    json_path = PROJECT_ROOT / "vpesg4k_val_1000.json"
-    csv_path = PROJECT_ROOT / "vpesg4k_val_1000.csv"
-    if json_path.exists():
-        return json_path
-    return csv_path
+def default_target_path(project_root: Path = PROJECT_ROOT) -> Path:
+    candidates = [
+        project_root / "data" / "vpesg4k_val_1000.json",
+        project_root / "data" / "vpesg4k_val_1000.csv",
+        project_root / "vpesg4k_val_1000.json",
+        project_root / "vpesg4k_val_1000.csv",
+    ]
+    for path in candidates:
+        if path.exists():
+            return path
+    return candidates[0]
 
 
 def parse_args() -> argparse.Namespace:

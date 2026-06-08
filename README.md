@@ -10,8 +10,9 @@ AICUP/
 ├─ environment.yml
 ├─ requirements.txt
 ├─ predict_submission.py
-├─ vpesg4k_val_1000.csv
-├─ vpesg4k_val_1000.json
+├─ data/
+│  ├─ vpesg4k_val_1000.csv
+│  └─ vpesg4k_val_1000.json
 ├─ outputs/
 │  └─ submission.csv
 ├─ tests/
@@ -68,7 +69,7 @@ conda deactivate
 
 ## 產生繳交檔
 
-確認根目錄已有驗證資料後，直接執行以下指令，會讀取 `vpesg4k_val_1000.json` 並產生 `outputs/submission.csv`。
+確認 `data/` 內已有驗證資料後，直接執行以下指令，會優先讀取 `data/vpesg4k_val_1000.json` 並產生 `outputs/submission.csv`。
 
 ```powershell
 conda activate aicup-esg
@@ -108,14 +109,14 @@ python predict_submission.py --predict-with-model
 
 ```powershell
 conda activate aicup-esg
-python predict_submission.py --predict-with-model --target vpesg4k_val_1000.csv --output outputs/submission.csv --model-path models/best_model.pt
+python predict_submission.py --predict-with-model --target data/vpesg4k_val_1000.csv --output outputs/submission.csv --model-path models/best_model.pt
 ```
 
 ## 主要參數
 
 | 參數 | 預設值 | 說明 |
 | --- | --- | --- |
-| `--target` | `vpesg4k_val_1000.json` | 要預測的 CSV 或 JSON 資料 |
+| `--target` | `data/vpesg4k_val_1000.json` | 要預測的 CSV 或 JSON 資料 |
 | `--output` | `outputs/submission.csv` | 繳交檔輸出位置 |
 | `--train-data` | `data/vpesg4k_train_1000.json` | 訓練資料位置 |
 | `--model-path` | `models/best_model.pt` | 模型權重儲存或讀取位置 |

@@ -14,6 +14,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from predict_submission import (  # noqa: E402
     SUBMISSION_COLUMNS,
     build_submission_rows,
+    default_target_path,
     resolve_device,
     write_submission_csv,
 )
@@ -40,6 +41,18 @@ class FakeTorch:
 
 
 class SubmissionFormatTest(unittest.TestCase):
+    def test_default_target_path_prefers_validation_json_in_data_directory(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            project_root = Path(tmp_dir)
+            data_dir = project_root / "data"
+            data_dir.mkdir()
+            data_target = data_dir / "vpesg4k_val_1000.json"
+            root_target = project_root / "vpesg4k_val_1000.json"
+            data_target.write_text("[]", encoding="utf-8")
+            root_target.write_text("[]", encoding="utf-8")
+
+            self.assertEqual(default_target_path(project_root), data_target)
+
     def test_resolve_device_rejects_cuda_when_torch_has_no_cuda_support(self):
         with patch.dict(sys.modules, {"torch": FakeTorch}):
             with self.assertRaisesRegex(RuntimeError, "CUDA"):
