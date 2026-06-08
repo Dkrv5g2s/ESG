@@ -42,13 +42,27 @@ conda env update -f environment.yml --prune
 conda activate aicup-esg
 ```
 
-安裝後先檢查 PyTorch 是否抓到 GPU：
+## 切換環境
+
+每次開新的 PowerShell 或終端機後，請先切換到本專案環境：
 
 ```powershell
-python predict_submission.py --check-gpu
+conda activate aicup-esg
 ```
 
-正常情況下應看到 `CUDA available: True`，並列出 NVIDIA 顯示卡名稱。若顯示 `PyTorch CUDA build: None` 或 `CUDA available: False`，代表目前環境不能使用 GPU，請確認已啟用 `aicup-esg` 環境並重新安裝 `environment.yml`。
+切換成功時，命令提示字元前方通常會出現 `(aicup-esg)`。若想確認目前使用哪個 Conda 環境，可執行：
+
+```powershell
+conda info --envs
+```
+
+清單中有 `*` 的那一列就是目前環境。要離開目前環境時執行：
+
+```powershell
+conda deactivate
+```
+
+若 PowerShell 顯示無法使用 `conda activate`，請先執行 `conda init powershell`，關掉並重新開啟 PowerShell 後再試一次。
 
 `requirements.txt` 保留作為 pip 備用安裝檔；正式執行建議以 `environment.yml` 為準。
 
@@ -67,7 +81,7 @@ python predict_submission.py
 
 ```powershell
 conda activate aicup-esg
-python predict_submission.py --train --device cuda
+python predict_submission.py --train
 ```
 
 預設會自動下載官方公開訓練資料到 `data/vpesg4k_train_1000.json`，使用 `bert-base-chinese` 訓練多任務分類模型，並把權重儲存到 `models/best_model.pt`。
@@ -76,10 +90,10 @@ python predict_submission.py --train --device cuda
 
 ```powershell
 conda activate aicup-esg
-python predict_submission.py --train --device cuda --epochs 3 --batch-size 16
+python predict_submission.py --train --epochs 3 --batch-size 16
 ```
 
-若使用 RTX 4090，可視 GPU 記憶體把 `--batch-size` 從 16 調到 32 或更高；若發生記憶體不足，再往下調整。
+程式預設會自動選擇可用裝置；有 CUDA GPU 時會使用 GPU，否則會退回 CPU。若使用 RTX 4090，可視 GPU 記憶體把 `--batch-size` 從 16 調到 32 或更高；若發生記憶體不足，再往下調整。
 
 ## 使用既有權重預測
 
@@ -111,8 +125,7 @@ python predict_submission.py --predict-with-model --target vpesg4k_val_1000.csv 
 | `--epochs` | `10` | 訓練回合數 |
 | `--learning-rate` | `2e-5` | 學習率 |
 | `--validation-size` | `0.2` | 驗證集比例 |
-| `--device` | `auto` | 可選 `auto`、`cpu`、`cuda`；訓練建議直接用 `cuda` |
-| `--check-gpu` | 關閉 | 顯示 PyTorch CUDA 診斷資訊後結束 |
+| `--device` | `auto` | 可選 `auto`、`cpu`、`cuda` |
 
 ## 繳交格式注意事項
 
