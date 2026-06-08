@@ -13,6 +13,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from predict_submission import (  # noqa: E402
     SUBMISSION_COLUMNS,
+    build_class_weights,
+    build_stratify_labels,
     build_submission_rows,
     default_target_path,
     resolve_device,
@@ -41,6 +43,55 @@ class FakeTorch:
 
 
 class SubmissionFormatTest(unittest.TestCase):
+    def test_build_class_weights_gives_larger_weight_to_rare_labels(self):
+        rows = [
+            {"promise_status": "Yes"},
+            {"promise_status": "Yes"},
+            {"promise_status": "Yes"},
+            {"promise_status": "No"},
+        ]
+        weights = build_class_weights(rows, "promise_status", {"Yes": 0, "No": 1})
+
+        self.assertLess(weights[0], weights[1])
+
+    def test_build_stratify_labels_uses_combined_eval_fields_when_repeated(self):
+        rows = [
+            {
+                "promise_status": "Yes",
+                "verification_timeline": "already",
+                "evidence_status": "Yes",
+                "evidence_quality": "Clear",
+            },
+            {
+                "promise_status": "Yes",
+                "verification_timeline": "already",
+                "evidence_status": "Yes",
+                "evidence_quality": "Clear",
+            },
+            {
+                "promise_status": "No",
+                "verification_timeline": "N/A",
+                "evidence_status": "N/A",
+                "evidence_quality": "N/A",
+            },
+            {
+                "promise_status": "No",
+                "verification_timeline": "N/A",
+                "evidence_status": "N/A",
+                "evidence_quality": "N/A",
+            },
+        ]
+
+        self.assertEqual(
+            build_stratify_labels(rows),
+            [
+                "Yes|already|Yes|Clear",
+                "Yes|already|Yes|Clear",
+                "No|N/A|N/A|N/A",
+                "No|N/A|N/A|N/A",
+            ],
+        )
+
     def test_default_target_path_prefers_validation_json_in_data_directory(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             project_root = Path(tmp_dir)

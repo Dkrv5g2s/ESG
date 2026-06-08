@@ -85,7 +85,7 @@ conda activate aicup-esg
 python predict_submission.py --train
 ```
 
-預設會自動下載官方公開訓練資料到 `data/vpesg4k_train_1000.json`，使用 `bert-base-chinese` 訓練多任務分類模型，並把權重儲存到 `models/best_model.pt`。
+預設會自動下載官方公開訓練資料到 `data/vpesg4k_train_1000.json`，使用 `hfl/chinese-roberta-wwm-ext` 訓練多任務分類模型，並把權重儲存到 `models/best_model.pt`。
 
 常用參數：
 
@@ -95,6 +95,12 @@ python predict_submission.py --train --epochs 3 --batch-size 16
 ```
 
 程式預設會自動選擇可用裝置；有 CUDA GPU 時會使用 GPU，否則會退回 CPU。若使用 RTX 4090，可視 GPU 記憶體把 `--batch-size` 從 16 調到 32 或更高；若發生記憶體不足，再往下調整。
+
+改良版訓練預設會使用類別權重、分層切分、early stopping、weight decay、warmup ratio，以及較強的多層分類頭。若想微調分數，可從以下參數開始：
+
+```powershell
+python predict_submission.py --train --epochs 8 --batch-size 32 --learning-rate 2e-5 --dropout-rate 0.2 --early-stopping-patience 3
+```
 
 ## 使用既有權重預測
 
@@ -120,12 +126,20 @@ python predict_submission.py --predict-with-model --target data/vpesg4k_val_1000
 | `--output` | `outputs/submission.csv` | 繳交檔輸出位置 |
 | `--train-data` | `data/vpesg4k_train_1000.json` | 訓練資料位置 |
 | `--model-path` | `models/best_model.pt` | 模型權重儲存或讀取位置 |
-| `--model-name` | `bert-base-chinese` | Hugging Face 預訓練模型名稱 |
+| `--model-name` | `hfl/chinese-roberta-wwm-ext` | Hugging Face 預訓練模型名稱 |
 | `--max-len` | `256` | Tokenizer 最大長度 |
 | `--batch-size` | `8` | 批次大小 |
 | `--epochs` | `10` | 訓練回合數 |
 | `--learning-rate` | `2e-5` | 學習率 |
+| `--weight-decay` | `0.01` | AdamW 權重衰減 |
+| `--warmup-ratio` | `0.1` | 線性 warmup 比例 |
 | `--validation-size` | `0.2` | 驗證集比例 |
+| `--dropout-rate` | `0.2` | 分類頭 dropout |
+| `--head-hidden-size` | `256` | 分類頭隱藏層大小；設為 `0` 可退回單層分類頭 |
+| `--early-stopping-patience` | `3` | 驗證分數未改善幾個 epoch 後停止 |
+| `--min-delta` | `0.0` | 視為改善所需的最低分數差 |
+| `--pooling` | `cls` | 可選 `cls`、`mean` |
+| `--no-class-weights` | 關閉 | 關閉類別權重 |
 | `--device` | `auto` | 可選 `auto`、`cpu`、`cuda` |
 
 ## 繳交格式注意事項
