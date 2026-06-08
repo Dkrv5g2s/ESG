@@ -23,18 +23,6 @@ AICUP/
    └─ baseline_reference.ipynb
 ```
 
-## 資料下載
-
-執行程式前，請先到 [AIdea VeriPromise ESG 2026 競賽頁面](https://www.aidea-web.tw/topic/ec993d30-204c-421a-acd4-ed12d719be78?focus=intro) 下載驗證資料集。
-
-下載後請將驗證資料放在專案根目錄，預設檔名如下：
-
-```text
-vpesg4k_val_1000.json
-vpesg4k_val_1000.csv
-```
-
-本專案預設優先讀取 `vpesg4k_val_1000.json`；若沒有 JSON 檔，才會改讀 `vpesg4k_val_1000.csv`。
 
 ## 環境安裝
 
