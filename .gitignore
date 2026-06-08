@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+
+# Model checkpoints and downloaded training data
+submission_package/models/
+submission_package/data/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+
+# Generated analysis images
+label_distribution.png
+training_curve.png
+f1_scores.png
+
+# Logs
+*.log
