@@ -167,12 +167,43 @@ def seed_everything(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
+def format_torch_cuda_report() -> str:
+    import torch
+
+    lines = [
+        f"PyTorch version: {torch.__version__}",
+        f"PyTorch CUDA build: {torch.version.cuda}",
+        f"CUDA available: {torch.cuda.is_available()}",
+        f"CUDA device count: {torch.cuda.device_count()}",
+    ]
+    if torch.cuda.is_available():
+        for index in range(torch.cuda.device_count()):
+            lines.append(f"CUDA device {index}: {torch.cuda.get_device_name(index)}")
+    return "\n".join(lines)
+
+
 def resolve_device(device_name: str):
     import torch
 
     if device_name == "auto":
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        print(
+            "CUDA is not available in this PyTorch environment; using CPU. "
+            "Run `python predict_submission.py --check-gpu` to inspect the setup."
+        )
+        return torch.device("cpu")
+    if device_name == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError(
+            "CUDA was requested, but this PyTorch environment cannot use CUDA.\n"
+            f"{format_torch_cuda_report()}\n"
+            "Install a CUDA-enabled PyTorch wheel, then run again with `--device cuda`."
+        )
     return torch.device(device_name)
+
+
+def uses_cuda(device) -> bool:
+    return getattr(device, "type", str(device)) == "cuda"
 
 
 def require_training_labels(rows: list[dict[str, Any]]) -> None:
@@ -279,10 +310,11 @@ def train_one_epoch(model, dataloader, optimizer, scheduler, device) -> float:
     total_loss = 0.0
 
     for step, batch in enumerate(dataloader, start=1):
-        input_ids = batch["input_ids"].to(device)
-        attention_mask = batch["attention_mask"].to(device)
+        non_blocking = uses_cuda(device)
+        input_ids = batch["input_ids"].to(device, non_blocking=non_blocking)
+        attention_mask = batch["attention_mask"].to(device, non_blocking=non_blocking)
         labels = {
-            field: values.to(device)
+            field: values.to(device, non_blocking=non_blocking)
             for field, values in batch["labels"].items()
         }
 
@@ -310,8 +342,9 @@ def predict_batches(model, dataloader, device, id2label: dict[str, dict[int, str
 
     with torch.no_grad():
         for batch in dataloader:
-            input_ids = batch["input_ids"].to(device)
-            attention_mask = batch["attention_mask"].to(device)
+            non_blocking = uses_cuda(device)
+            input_ids = batch["input_ids"].to(device, non_blocking=non_blocking)
+            attention_mask = batch["attention_mask"].to(device, non_blocking=non_blocking)
             logits = model(input_ids=input_ids, attention_mask=attention_mask)
 
             batch_size = input_ids.size(0)
@@ -385,6 +418,7 @@ def train_and_predict(
         batch_size=batch_size,
         shuffle=True,
         collate_fn=collate_batch,
+        pin_memory=uses_cuda(device),
     )
     valid_loader = None
     if valid_split:
@@ -393,6 +427,7 @@ def train_and_predict(
             batch_size=batch_size,
             shuffle=False,
             collate_fn=collate_batch,
+            pin_memory=uses_cuda(device),
         )
 
     model = MultiTaskClassifier(num_labels).to(device)
@@ -453,6 +488,7 @@ def train_and_predict(
         batch_size=batch_size,
         shuffle=False,
         collate_fn=collate_batch,
+        pin_memory=uses_cuda(device),
     )
     return predict_batches(model, target_loader, device, id2label)
 
@@ -488,6 +524,7 @@ def predict_with_checkpoint(
         batch_size=batch_size,
         shuffle=False,
         collate_fn=collate_batch,
+        pin_memory=uses_cuda(device),
     )
     return predict_batches(model, dataloader, device, id2label)
 
@@ -516,6 +553,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--validation-size", type=float, default=0.2)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
+    parser.add_argument(
+        "--check-gpu",
+        action="store_true",
+        help="Print PyTorch CUDA diagnostics and exit.",
+    )
     parser.add_argument("--train", action="store_true", help="Train a model before prediction.")
     parser.add_argument(
         "--predict-with-model",
@@ -532,6 +574,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if args.check_gpu:
+        print(format_torch_cuda_report())
+        return
+
     target_rows = load_rows(args.target)
 
     if args.train:

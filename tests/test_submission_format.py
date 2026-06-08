@@ -3,6 +3,8 @@ import io
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 from pathlib import Path
 
 
@@ -12,11 +14,37 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from predict_submission import (  # noqa: E402
     SUBMISSION_COLUMNS,
     build_submission_rows,
+    resolve_device,
     write_submission_csv,
 )
 
 
+class FakeCuda:
+    @staticmethod
+    def is_available():
+        return False
+
+    @staticmethod
+    def device_count():
+        return 0
+
+
+class FakeTorch:
+    __version__ = "2.7.1+cpu"
+    version = SimpleNamespace(cuda=None)
+    cuda = FakeCuda()
+
+    @staticmethod
+    def device(name):
+        return SimpleNamespace(type=name)
+
+
 class SubmissionFormatTest(unittest.TestCase):
+    def test_resolve_device_rejects_cuda_when_torch_has_no_cuda_support(self):
+        with patch.dict(sys.modules, {"torch": FakeTorch}):
+            with self.assertRaisesRegex(RuntimeError, "CUDA"):
+                resolve_device("cuda")
+
     def test_build_submission_rows_keeps_official_columns_and_applies_predictions(self):
         source_rows = [
             {

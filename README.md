@@ -36,7 +36,22 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-若電腦有 NVIDIA GPU 且要使用 CUDA，請依照本機 CUDA 版本安裝對應的 PyTorch 版本，再安裝其餘套件。
+不用一定要 Conda，`.venv` 可以正常使用 PyTorch。重點是必須安裝 CUDA 版 PyTorch，而不是 CPU 版 PyTorch。
+
+本專案的 `requirements.txt` 預設使用 CUDA 12.8 版 PyTorch。若先前已裝過 CPU 版 PyTorch，請先移除再重裝：
+
+```powershell
+pip uninstall -y torch torchvision torchaudio
+pip install -r requirements.txt
+```
+
+安裝後先檢查 PyTorch 是否抓到 GPU：
+
+```powershell
+python predict_submission.py --check-gpu
+```
+
+正常情況下應看到 `CUDA available: True`，並列出 NVIDIA 顯示卡名稱。若顯示 `torch 2.7.1+cpu` 或 `PyTorch CUDA build: None`，代表仍是 CPU 版 PyTorch，訓練不會使用 GPU。
 
 ## 產生繳交檔
 
@@ -51,7 +66,7 @@ python predict_submission.py
 ## 重新訓練 Baseline
 
 ```powershell
-python predict_submission.py --train
+python predict_submission.py --train --device cuda
 ```
 
 預設會自動下載官方公開訓練資料到 `data/vpesg4k_train_1000.json`，使用 `bert-base-chinese` 訓練多任務分類模型，並把權重儲存到 `models/best_model.pt`。
@@ -59,8 +74,10 @@ python predict_submission.py --train
 常用參數：
 
 ```powershell
-python predict_submission.py --train --epochs 3 --batch-size 8 --device auto
+python predict_submission.py --train --device cuda --epochs 3 --batch-size 16
 ```
+
+若使用 RTX 4090，可視 GPU 記憶體把 `--batch-size` 從 16 調到 32 或更高；若發生記憶體不足，再往下調整。
 
 ## 使用既有權重預測
 
@@ -90,7 +107,8 @@ python predict_submission.py --predict-with-model --target vpesg4k_val_1000.csv 
 | `--epochs` | `10` | 訓練回合數 |
 | `--learning-rate` | `2e-5` | 學習率 |
 | `--validation-size` | `0.2` | 驗證集比例 |
-| `--device` | `auto` | 可選 `auto`、`cpu`、`cuda` |
+| `--device` | `auto` | 可選 `auto`、`cpu`、`cuda`；訓練建議直接用 `cuda` |
+| `--check-gpu` | 關閉 | 顯示 PyTorch CUDA 診斷資訊後結束 |
 
 ## 繳交格式注意事項
 
