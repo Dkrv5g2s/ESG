@@ -10,4 +10,4 @@
 | `submit_format.txt` | 繳交格式原始檔 |
 | `baseline_reference.ipynb` | 官方或課程提供的 baseline notebook 參考 |
 
-主要可執行程式碼已移到倉庫根目錄，請從根目錄執行 `predict_submission.py`。
+主要可執行程式碼已移到倉庫根目錄。官方 baseline 對應入口請執行 `baseline_reference.py`；改良版請執行 `ours.py`。

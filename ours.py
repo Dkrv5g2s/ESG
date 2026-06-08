@@ -191,7 +191,7 @@ def resolve_device(device_name: str):
             return torch.device("cuda")
         print(
             "CUDA is not available in this PyTorch environment; using CPU. "
-            "Run `python predict_submission.py --check-gpu` to inspect the setup."
+            "Please confirm the active Conda environment has a CUDA-enabled PyTorch build."
         )
         return torch.device("cpu")
     if device_name == "cuda" and not torch.cuda.is_available():
