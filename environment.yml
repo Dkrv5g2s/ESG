@@ -1,0 +1,15 @@
+name: aicup-esg
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - numpy>=1.26,<3
+  - pandas>=2.2,<3
+  - scikit-learn>=1.4,<2
+  - matplotlib>=3.8,<4
+  - seaborn>=0.13,<1
+  - pip:
+      - --extra-index-url https://download.pytorch.org/whl/cu128
+      - torch==2.8.0+cu128
+      - transformers>=4.41,<5

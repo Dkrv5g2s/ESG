@@ -7,6 +7,7 @@
 ```text
 AICUP/
 ├─ README.md
+├─ environment.yml
 ├─ requirements.txt
 ├─ predict_submission.py
 ├─ vpesg4k_val_1000.csv
@@ -26,23 +27,19 @@ AICUP/
 
 ## 環境安裝
 
-建議使用 Python 3.10 以上版本。
+建議使用 Conda 建立獨立環境。PyTorch 官方目前主要提供 pip wheel 安裝指令；因此本專案使用 Conda 管理 Python 與資料科學套件，並在 Conda 環境內用 pip 安裝 CUDA 12.8 版 PyTorch。
 
 ```powershell
 cd C:\Users\Ted\Desktop\AICUP
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -r requirements.txt
+conda env create -f environment.yml
+conda activate aicup-esg
 ```
 
-不用一定要 Conda，`.venv` 可以正常使用 PyTorch。重點是必須安裝 CUDA 版 PyTorch，而不是 CPU 版 PyTorch。
-
-本專案的 `requirements.txt` 預設使用 CUDA 12.8 版 PyTorch。若先前已裝過 CPU 版 PyTorch，請先移除再重裝：
+如果已經建立過同名環境，請用以下指令更新：
 
 ```powershell
-pip uninstall -y torch torchvision torchaudio
-pip install -r requirements.txt
+conda env update -f environment.yml --prune
+conda activate aicup-esg
 ```
 
 安裝後先檢查 PyTorch 是否抓到 GPU：
@@ -51,13 +48,16 @@ pip install -r requirements.txt
 python predict_submission.py --check-gpu
 ```
 
-正常情況下應看到 `CUDA available: True`，並列出 NVIDIA 顯示卡名稱。若顯示 `torch 2.7.1+cpu` 或 `PyTorch CUDA build: None`，代表仍是 CPU 版 PyTorch，訓練不會使用 GPU。
+正常情況下應看到 `CUDA available: True`，並列出 NVIDIA 顯示卡名稱。若顯示 `PyTorch CUDA build: None` 或 `CUDA available: False`，代表目前環境不能使用 GPU，請確認已啟用 `aicup-esg` 環境並重新安裝 `environment.yml`。
+
+`requirements.txt` 保留作為 pip 備用安裝檔；正式執行建議以 `environment.yml` 為準。
 
 ## 產生繳交檔
 
 確認根目錄已有驗證資料後，直接執行以下指令，會讀取 `vpesg4k_val_1000.json` 並產生 `outputs/submission.csv`。
 
 ```powershell
+conda activate aicup-esg
 python predict_submission.py
 ```
 
@@ -66,6 +66,7 @@ python predict_submission.py
 ## 重新訓練 Baseline
 
 ```powershell
+conda activate aicup-esg
 python predict_submission.py --train --device cuda
 ```
 
@@ -74,6 +75,7 @@ python predict_submission.py --train --device cuda
 常用參數：
 
 ```powershell
+conda activate aicup-esg
 python predict_submission.py --train --device cuda --epochs 3 --batch-size 16
 ```
 
@@ -84,12 +86,14 @@ python predict_submission.py --train --device cuda --epochs 3 --batch-size 16
 已經有 `models/best_model.pt` 時，可直接讀取權重產生繳交檔。
 
 ```powershell
+conda activate aicup-esg
 python predict_submission.py --predict-with-model
 ```
 
 也可以指定資料、輸出位置與模型權重：
 
 ```powershell
+conda activate aicup-esg
 python predict_submission.py --predict-with-model --target vpesg4k_val_1000.csv --output outputs/submission.csv --model-path models/best_model.pt
 ```
 
@@ -123,6 +127,7 @@ id,data,esg_type,promise_status,promise_string,verification_timeline,evidence_st
 ## 測試
 
 ```powershell
+conda activate aicup-esg
 python -m unittest discover -s tests
 ```
 
