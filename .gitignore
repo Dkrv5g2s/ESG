@@ -23,6 +23,12 @@ ENV/
 # Data and generated result files
 *.json
 *.csv
+*.pt
+!data/
+!data/*.json
+!data/*.csv
+!data/**/*.json
+!data/**/*.csv
 
 # Local environment files
 .env

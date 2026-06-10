@@ -681,7 +681,7 @@ def parse_args() -> argparse.Namespace:
         description="Create an AI CUP VeriPromiseESG submission CSV."
     )
     parser.add_argument("--target", type=Path, default=default_target_path())
-    parser.add_argument("--output", type=Path, default=PROJECT_ROOT / "outputs" / "submission.csv")
+    parser.add_argument("--output", type=Path, default=PROJECT_ROOT / "outputs" / "baseline_submission.csv")
     parser.add_argument("--metrics-output", type=Path, default=PROJECT_ROOT / "outputs" / "validation_metrics.json")
     parser.add_argument("--train-data", type=Path, default=PROJECT_ROOT / "data" / "vpesg4k_train_1000.json")
     parser.add_argument(
