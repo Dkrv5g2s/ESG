@@ -246,17 +246,20 @@ class SubmissionFormatTest(unittest.TestCase):
             self.assertEqual(default_target_path(project_root), test_target)
             self.assertEqual(ours_module.default_target_path(project_root), test_target)
 
-    def test_ours_defaults_target_4090_training_without_reusing_old_checkpoint(self):
+    def test_ours_defaults_use_conservative_model_and_weight_tuning(self):
         with patch.object(sys, "argv", ["ours.py"]):
             args = ours_module.parse_args()
 
-        self.assertEqual(args.model_path, PROJECT_ROOT / "models" / "ours_4090.pt")
-        self.assertEqual(args.model_name, "hfl/chinese-roberta-wwm-ext-large")
-        self.assertEqual(args.max_len, 512)
-        self.assertEqual(args.batch_size, 16)
-        self.assertEqual(args.pooling, "mean")
+        self.assertEqual(args.model_path, PROJECT_ROOT / "models" / "ours.pt")
+        self.assertEqual(args.model_name, "hfl/chinese-roberta-wwm-ext")
+        self.assertEqual(args.max_len, 256)
+        self.assertEqual(args.batch_size, 8)
+        self.assertEqual(args.pooling, "cls")
         self.assertEqual(args.class_weight_mode, "sqrt")
+        self.assertEqual(args.max_class_weight, 4.0)
+        self.assertEqual(args.label_smoothing, 0.0)
         self.assertFalse(args.no_mixed_precision)
+        self.assertFalse(args.apply_prediction_constraints)
         self.assertEqual(args.validation_data, default_validation_path())
         self.assertFalse(hasattr(args, "extra_train_data"))
         self.assertFalse(hasattr(args, "no_final_train_all_data"))

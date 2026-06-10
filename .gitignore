@@ -20,6 +20,10 @@ ENV/
 # Jupyter
 .ipynb_checkpoints/
 
+# Data and generated result files
+*.json
+*.csv
+
 # Local environment files
 .env
 .env.*

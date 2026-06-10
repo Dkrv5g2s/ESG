@@ -595,6 +595,7 @@ def predict_batches(
     device,
     id2label: dict[str, dict[int, str]],
     use_mixed_precision: bool = False,
+    apply_constraints: bool = False,
 ):
     model.eval()
     predictions = []
@@ -615,7 +616,9 @@ def predict_batches(
                 for field in EVAL_FIELDS:
                     label_id = int(logits[field][row_index].argmax().item())
                     prediction[field] = id2label[field][label_id]
-                predictions.append(apply_prediction_constraints(prediction))
+                if apply_constraints:
+                    prediction = apply_prediction_constraints(prediction)
+                predictions.append(prediction)
 
     return predictions
 
@@ -661,6 +664,7 @@ def train_and_predict(
     max_class_weight: float,
     label_smoothing: float,
     use_mixed_precision: bool,
+    apply_constraints: bool,
     metrics_output: Path | None,
 ):
     import torch
@@ -764,6 +768,7 @@ def train_and_predict(
             device,
             id2label,
             use_mixed_precision=use_mixed_precision,
+            apply_constraints=apply_constraints,
         )
         scores = evaluate_predictions(validation_rows, valid_predictions)
         score = scores["final_weighted_score"]
@@ -838,6 +843,7 @@ def train_and_predict(
         device,
         id2label,
         use_mixed_precision=use_mixed_precision,
+        apply_constraints=apply_constraints,
     )
 
 
@@ -850,6 +856,7 @@ def predict_with_checkpoint(
     batch_size: int,
     device_name: str,
     use_mixed_precision: bool,
+    apply_constraints: bool,
     metrics_output: Path | None,
 ):
     import torch
@@ -905,6 +912,7 @@ def predict_with_checkpoint(
         device,
         id2label,
         use_mixed_precision=use_mixed_precision,
+        apply_constraints=apply_constraints,
     )
 
 
@@ -957,23 +965,24 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Train without validation scoring or early stopping.",
     )
-    parser.add_argument("--model-path", type=Path, default=PROJECT_ROOT / "models" / "ours_4090.pt")
-    parser.add_argument("--model-name", default="hfl/chinese-roberta-wwm-ext-large")
-    parser.add_argument("--max-len", type=int, default=512)
-    parser.add_argument("--batch-size", type=int, default=16)
-    parser.add_argument("--epochs", type=int, default=12)
-    parser.add_argument("--learning-rate", type=float, default=1e-5)
-    parser.add_argument("--weight-decay", type=float, default=0.02)
-    parser.add_argument("--warmup-ratio", type=float, default=0.06)
-    parser.add_argument("--dropout-rate", type=float, default=0.3)
-    parser.add_argument("--head-hidden-size", type=int, default=512)
+    parser.add_argument("--model-path", type=Path, default=PROJECT_ROOT / "models" / "ours.pt")
+    parser.add_argument("--model-name", default="hfl/chinese-roberta-wwm-ext")
+    parser.add_argument("--max-len", type=int, default=256)
+    parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--learning-rate", type=float, default=2e-5)
+    parser.add_argument("--weight-decay", type=float, default=0.01)
+    parser.add_argument("--warmup-ratio", type=float, default=0.1)
+    parser.add_argument("--dropout-rate", type=float, default=0.2)
+    parser.add_argument("--head-hidden-size", type=int, default=256)
     parser.add_argument("--early-stopping-patience", type=int, default=3)
     parser.add_argument("--min-delta", type=float, default=0.0)
-    parser.add_argument("--pooling", default="mean", choices=["cls", "mean"])
+    parser.add_argument("--pooling", default="cls", choices=["cls", "mean"])
     parser.add_argument("--class-weight-mode", default="sqrt", choices=["balanced", "sqrt", "none"])
-    parser.add_argument("--max-class-weight", type=float, default=8.0)
-    parser.add_argument("--label-smoothing", type=float, default=0.05)
+    parser.add_argument("--max-class-weight", type=float, default=4.0)
+    parser.add_argument("--label-smoothing", type=float, default=0.0)
     parser.add_argument("--no-class-weights", action="store_true")
+    parser.add_argument("--apply-prediction-constraints", action="store_true")
     parser.add_argument("--no-mixed-precision", action="store_true")
     parser.add_argument("--force-train", action="store_true")
     parser.add_argument("--seed", type=int, default=42)
@@ -1002,6 +1011,7 @@ def main() -> None:
             batch_size=args.batch_size,
             device_name=args.device,
             use_mixed_precision=use_mixed_precision,
+            apply_constraints=args.apply_prediction_constraints,
             metrics_output=args.metrics_output,
         )
     else:
@@ -1044,6 +1054,7 @@ def main() -> None:
             max_class_weight=args.max_class_weight,
             label_smoothing=args.label_smoothing,
             use_mixed_precision=use_mixed_precision,
+            apply_constraints=args.apply_prediction_constraints,
             metrics_output=args.metrics_output,
         )
 
