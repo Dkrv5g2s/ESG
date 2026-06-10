@@ -50,44 +50,20 @@ AICUP/
 
 ## 環境安裝
 
-建議使用 Conda 建立獨立環境。PyTorch 官方目前主要提供 pip wheel 安裝指令；因此本專案使用 Conda 管理 Python 與資料科學套件，並在 Conda 環境內用 pip 安裝 CUDA 12.8 版 PyTorch。
+建議使用 Conda 建立獨立環境。PyTorch 官方目前主要提供 pip wheel 安裝指令；因此本專案使用 Conda 管理 Python 與資料科學套件，並在 Conda 環境內用 pip 安裝 CUDA 12.8 版 PyTorch，切換到本專案環境。
 
 ```powershell
-cd C:\Users\Ted\Desktop\AICUP
 conda env create -f environment.yml
 conda activate aicup-esg
-```
-
-如果已經建立過同名環境，請用以下指令更新：
-
-```powershell
-conda env update -f environment.yml --prune
 conda activate aicup-esg
 ```
 
-## 切換環境
 
-每次開新的 PowerShell 或終端機後，請先切換到本專案環境：
-
-```powershell
-conda activate aicup-esg
-```
-
-切換成功時，命令提示字元前方通常會出現 `(aicup-esg)`。若想確認目前使用哪個 Conda 環境，可執行：
-
-```powershell
-conda info --envs
-```
-
-清單中有 `*` 的那一列就是目前環境。要離開目前環境時執行：
+##離開目前環境時執行：
 
 ```powershell
 conda deactivate
 ```
-
-若 PowerShell 顯示無法使用 `conda activate`，請先執行 `conda init powershell`，關掉並重新開啟 PowerShell 後再試一次。
-
-`requirements.txt` 保留作為 pip 備用安裝檔；正式執行建議以 `environment.yml` 為準。
 
 ## 產生繳交檔
 
