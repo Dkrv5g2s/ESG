@@ -12,6 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 import baseline_reference  # noqa: E402
+import ours as ours_module  # noqa: E402
 from baseline_reference import (  # noqa: E402
     SUBMISSION_COLUMNS,
     build_submission_rows,
@@ -105,17 +106,18 @@ class SubmissionFormatTest(unittest.TestCase):
             ],
         )
 
-    def test_default_target_path_prefers_validation_json_in_data_directory(self):
+    def test_default_target_path_prefers_test_json_in_data_directory(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             project_root = Path(tmp_dir)
             data_dir = project_root / "data"
             data_dir.mkdir()
-            data_target = data_dir / "vpesg4k_val_1000.json"
-            root_target = project_root / "vpesg4k_val_1000.json"
-            data_target.write_text("[]", encoding="utf-8")
-            root_target.write_text("[]", encoding="utf-8")
+            test_target = data_dir / "vpesg4k_test_2000.json"
+            val_target = data_dir / "vpesg4k_val_1000.json"
+            test_target.write_text("[]", encoding="utf-8")
+            val_target.write_text("[]", encoding="utf-8")
 
-            self.assertEqual(default_target_path(project_root), data_target)
+            self.assertEqual(default_target_path(project_root), test_target)
+            self.assertEqual(ours_module.default_target_path(project_root), test_target)
 
     def test_resolve_device_rejects_cuda_when_torch_has_no_cuda_support(self):
         with patch.dict(sys.modules, {"torch": FakeTorch}):

@@ -662,6 +662,10 @@ def predict_with_checkpoint(
 
 def default_target_path(project_root: Path = PROJECT_ROOT) -> Path:
     candidates = [
+        project_root / "data" / "vpesg4k_test_2000.json",
+        project_root / "data" / "vpesg4k_test_2000.csv",
+        project_root / "vpesg4k_test_2000.json",
+        project_root / "vpesg4k_test_2000.csv",
         project_root / "data" / "vpesg4k_val_1000.json",
         project_root / "data" / "vpesg4k_val_1000.csv",
         project_root / "vpesg4k_val_1000.json",

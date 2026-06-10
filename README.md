@@ -13,6 +13,8 @@ AICUP/
 ├─ ours.py
 ├─ data/
 │  ├─ vpesg4k_train_1000.json
+│  ├─ vpesg4k_test_2000.csv
+│  ├─ vpesg4k_test_2000.json
 │  ├─ vpesg4k_val_1000.csv
 │  └─ vpesg4k_val_1000.json
 ├─ outputs/
@@ -89,7 +91,7 @@ conda deactivate
 
 ## 產生繳交檔
 
-確認 `data/` 內已有訓練資料與官方驗證資料後，直接執行以下指令。程式會優先讀取 `data/vpesg4k_val_1000.json`，並產生 `outputs/submission.csv`。
+確認 `data/` 內已有訓練資料與競賽測試集後，直接執行以下指令。程式會優先讀取 `data/vpesg4k_test_2000.json`，並產生 `outputs/submission.csv` 作為測試集預測結果。
 
 ```powershell
 conda activate aicup-esg
@@ -123,7 +125,7 @@ python ours.py
 
 | 參數 | 預設值 | 說明 |
 | --- | --- | --- |
-| `--target` | `data/vpesg4k_val_1000.json` | 要預測的 CSV 或 JSON 資料 |
+| `--target` | `data/vpesg4k_test_2000.json` | 要預測的 CSV 或 JSON 資料；預設為競賽測試集，驗證集僅作備援 |
 | `--output` | `outputs/submission.csv` | 繳交檔輸出位置 |
 | `--train-data` | `data/vpesg4k_train_1000.json` | 訓練資料位置 |
 | `--model-path` | `models/baseline_reference.pt` 或 `models/ours.pt` | 模型權重儲存或讀取位置 |
