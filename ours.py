@@ -188,6 +188,33 @@ def write_submission_csv(rows: list[dict[str, str]], output_path: Path) -> None:
         writer.writerows(rows)
 
 
+def write_validation_metrics_json(
+    scores: dict[str, Any] | None,
+    output_path: Path,
+    *,
+    epoch: int | None = None,
+    validation_rows: int = 0,
+) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    metrics = {
+        "best_epoch": epoch,
+        "validation_rows": validation_rows,
+        "weighted_score": None,
+        "task_f1": {},
+    }
+    if scores:
+        metrics["weighted_score"] = scores.get("final_weighted_score")
+        metrics["task_f1"] = {
+            field: scores[field]
+            for field in TASK_REPORT_ORDER
+            if field in scores
+        }
+    output_path.write_text(
+        json.dumps(metrics, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
 def seed_everything(seed: int) -> None:
     random.seed(seed)
     try:
@@ -634,6 +661,7 @@ def train_and_predict(
     max_class_weight: float,
     label_smoothing: float,
     use_mixed_precision: bool,
+    metrics_output: Path | None,
 ):
     import torch
     from torch.utils.data import DataLoader
@@ -767,6 +795,14 @@ def train_and_predict(
 
     if best_scores is not None:
         print_score_report("Best validation result", best_scores, epoch=best_epoch)
+    if metrics_output is not None:
+        write_validation_metrics_json(
+            best_scores,
+            metrics_output,
+            epoch=best_epoch or None,
+            validation_rows=len(validation_rows),
+        )
+        print(f"Validation metrics written to: {metrics_output}")
 
     model_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
@@ -814,6 +850,7 @@ def predict_with_checkpoint(
     batch_size: int,
     device_name: str,
     use_mixed_precision: bool,
+    metrics_output: Path | None,
 ):
     import torch
     from torch.utils.data import DataLoader
@@ -827,11 +864,21 @@ def predict_with_checkpoint(
     checkpoint_dropout_rate = float(checkpoint.get("dropout_rate", 0.2))
     checkpoint_head_hidden_size = int(checkpoint.get("head_hidden_size", 0))
     checkpoint_pooling = checkpoint.get("pooling", "cls")
+    checkpoint_scores = checkpoint.get("best_scores")
+    checkpoint_epoch = checkpoint.get("best_epoch")
     print_score_report(
         "Checkpoint validation result",
-        checkpoint.get("best_scores"),
-        epoch=checkpoint.get("best_epoch"),
+        checkpoint_scores,
+        epoch=checkpoint_epoch,
     )
+    if metrics_output is not None:
+        write_validation_metrics_json(
+            checkpoint_scores,
+            metrics_output,
+            epoch=checkpoint_epoch,
+            validation_rows=int(checkpoint.get("validation_rows", 0) or 0),
+        )
+        print(f"Validation metrics written to: {metrics_output}")
 
     _, id2label = build_label_maps()
     num_labels = {field: len(labels) for field, labels in EVAL_FIELDS.items()}
@@ -897,6 +944,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--target", type=Path, default=default_target_path())
     parser.add_argument("--output", type=Path, default=PROJECT_ROOT / "outputs" / "submission.csv")
+    parser.add_argument("--metrics-output", type=Path, default=PROJECT_ROOT / "outputs" / "validation_metrics.json")
     parser.add_argument("--train-data", type=Path, default=PROJECT_ROOT / "data" / "vpesg4k_train_1000.json")
     parser.add_argument(
         "--validation-data",
@@ -954,6 +1002,7 @@ def main() -> None:
             batch_size=args.batch_size,
             device_name=args.device,
             use_mixed_precision=use_mixed_precision,
+            metrics_output=args.metrics_output,
         )
     else:
         if args.model_path.exists():
@@ -995,6 +1044,7 @@ def main() -> None:
             max_class_weight=args.max_class_weight,
             label_smoothing=args.label_smoothing,
             use_mixed_precision=use_mixed_precision,
+            metrics_output=args.metrics_output,
         )
 
     submission_rows = build_submission_rows(target_rows, predictions)

@@ -67,7 +67,7 @@ conda deactivate
 
 ## 產生繳交檔
 
-確認 `data/` 內已有訓練資料與競賽測試集後，直接執行以下指令。程式會優先讀取 `data/vpesg4k_test_2000.json`，並產生 `outputs/submission.csv` 作為測試集預測結果。
+確認 `data/` 內已有訓練資料、驗證資料與競賽測試集後，直接執行以下指令。程式會優先讀取 `data/vpesg4k_test_2000.json`，並產生 `outputs/submission.csv` 作為測試集預測結果，同時輸出 `outputs/validation_metrics.json` 保存驗證集 weighted score 與各任務 F1。
 
 ```powershell
 conda activate aicup-esg
@@ -97,7 +97,7 @@ python ours.py
 
 程式預設會自動選擇可用裝置；有 CUDA GPU 時會使用 GPU，否則會退回 CPU。`ours.py` 目前預設偏向 RTX 4090：使用訓練集訓練模型，使用官方驗證集計算 weighted score 與各子任務分數並做 early stopping，測試集只用來推論並輸出 `outputs/submission.csv`。若已有舊權重但想重新訓練，可加上 `--force-train`。
 
-執行結束時，terminal 會印出最佳驗證分數、各子任務分數，以及提交檔內各標籤的預測筆數分布，方便上傳前快速檢查。
+執行結束時，terminal 會印出最佳驗證分數、各子任務分數，以及提交檔內各標籤的預測筆數分布；同樣的驗證分數會寫入 `outputs/validation_metrics.json`，方便保存與回報。
 
 ## 主要參數
 
@@ -105,6 +105,7 @@ python ours.py
 | --- | --- | --- |
 | `--target` | `data/vpesg4k_test_2000.json` | 要預測的 CSV 或 JSON 資料；預設為競賽測試集，驗證集僅作備援 |
 | `--output` | `outputs/submission.csv` | 繳交檔輸出位置 |
+| `--metrics-output` | `outputs/validation_metrics.json` | 驗證集 weighted score 與各任務 F1 輸出位置 |
 | `--train-data` | `data/vpesg4k_train_1000.json` | 訓練資料位置 |
 | `--validation-data` | `data/vpesg4k_val_1000.json` | 驗證資料位置，只用於評估與 early stopping |
 | `--no-validation-data` | 關閉 | 不使用驗證資料；訓練會跑完所有 epoch |
@@ -138,6 +139,22 @@ id,data,esg_type,promise_status,promise_string,verification_timeline,evidence_st
 ```
 
 程式輸出的 CSV 使用 UTF-8 無 BOM 編碼與 Unix 換行字元，符合競賽規則中對繳交檔的基本要求。
+
+`outputs/validation_metrics.json` 會保存本機驗證集分數，例如：
+
+```json
+{
+  "best_epoch": 6,
+  "validation_rows": 1000,
+  "weighted_score": 0.5901,
+  "task_f1": {
+    "promise_status": 0.7934,
+    "evidence_status": 0.6745,
+    "evidence_quality": 0.4414,
+    "verification_timeline": 0.4973
+  }
+}
+```
 
 ## 測試
 

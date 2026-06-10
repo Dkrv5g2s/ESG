@@ -1,5 +1,6 @@
 import csv
 import io
+import json
 import sys
 import tempfile
 import unittest
@@ -166,6 +167,33 @@ class SubmissionFormatTest(unittest.TestCase):
         self.assertIn("Submission prediction distribution", report)
         self.assertIn("promise_status: Yes=1, No=1", report)
         self.assertIn("evidence_quality: Clear=1, N/A=1", report)
+
+    def test_write_validation_metrics_json_saves_weighted_and_task_f1_scores(self):
+        scores = {
+            "final_weighted_score": 0.5901,
+            "promise_status": 0.7934,
+            "evidence_status": 0.6745,
+            "evidence_quality": 0.4414,
+            "verification_timeline": 0.4973,
+        }
+
+        for module in (baseline_reference, ours_module):
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                output_path = Path(tmp_dir) / "validation_metrics.json"
+                module.write_validation_metrics_json(
+                    scores,
+                    output_path,
+                    epoch=6,
+                    validation_rows=1000,
+                )
+
+                metrics = json.loads(output_path.read_text(encoding="utf-8"))
+
+            self.assertEqual(metrics["best_epoch"], 6)
+            self.assertEqual(metrics["validation_rows"], 1000)
+            self.assertAlmostEqual(metrics["weighted_score"], 0.5901)
+            self.assertAlmostEqual(metrics["task_f1"]["promise_status"], 0.7934)
+            self.assertAlmostEqual(metrics["task_f1"]["evidence_quality"], 0.4414)
 
     def test_build_stratify_labels_uses_combined_eval_fields_when_repeated(self):
         rows = [

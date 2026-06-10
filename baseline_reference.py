@@ -166,6 +166,33 @@ def write_submission_csv(rows: list[dict[str, str]], output_path: Path) -> None:
         writer.writerows(rows)
 
 
+def write_validation_metrics_json(
+    scores: dict[str, Any] | None,
+    output_path: Path,
+    *,
+    epoch: int | None = None,
+    validation_rows: int = 0,
+) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    metrics = {
+        "best_epoch": epoch,
+        "validation_rows": validation_rows,
+        "weighted_score": None,
+        "task_f1": {},
+    }
+    if scores:
+        metrics["weighted_score"] = scores.get("final_weighted_score")
+        metrics["task_f1"] = {
+            field: scores[field]
+            for field in TASK_REPORT_ORDER
+            if field in scores
+        }
+    output_path.write_text(
+        json.dumps(metrics, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
 def seed_everything(seed: int) -> None:
     random.seed(seed)
     try:
@@ -450,6 +477,7 @@ def train_and_predict(
     learning_rate: float,
     seed: int,
     device_name: str,
+    metrics_output: Path | None,
 ):
     import torch
     from torch.utils.data import DataLoader
@@ -532,6 +560,14 @@ def train_and_predict(
 
     if best_scores is not None:
         print_score_report("Best validation result", best_scores, epoch=best_epoch)
+    if metrics_output is not None:
+        write_validation_metrics_json(
+            best_scores,
+            metrics_output,
+            epoch=best_epoch or None,
+            validation_rows=len(validation_rows),
+        )
+        print(f"Validation metrics written to: {metrics_output}")
 
     model_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
@@ -566,6 +602,7 @@ def predict_with_checkpoint(
     max_len: int,
     batch_size: int,
     device_name: str,
+    metrics_output: Path | None,
 ):
     import torch
     from torch.utils.data import DataLoader
@@ -575,11 +612,21 @@ def predict_with_checkpoint(
     checkpoint = torch.load(model_path, map_location=device)
     checkpoint_model_name = checkpoint.get("model_name", model_name)
     checkpoint_max_len = int(checkpoint.get("max_len", max_len))
+    checkpoint_scores = checkpoint.get("best_scores")
+    checkpoint_epoch = checkpoint.get("best_epoch")
     print_score_report(
         "Checkpoint validation result",
-        checkpoint.get("best_scores"),
-        epoch=checkpoint.get("best_epoch"),
+        checkpoint_scores,
+        epoch=checkpoint_epoch,
     )
+    if metrics_output is not None:
+        write_validation_metrics_json(
+            checkpoint_scores,
+            metrics_output,
+            epoch=checkpoint_epoch,
+            validation_rows=int(checkpoint.get("validation_rows", 0) or 0),
+        )
+        print(f"Validation metrics written to: {metrics_output}")
 
     _, id2label = build_label_maps()
     num_labels = {field: len(labels) for field, labels in EVAL_FIELDS.items()}
@@ -635,6 +682,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--target", type=Path, default=default_target_path())
     parser.add_argument("--output", type=Path, default=PROJECT_ROOT / "outputs" / "submission.csv")
+    parser.add_argument("--metrics-output", type=Path, default=PROJECT_ROOT / "outputs" / "validation_metrics.json")
     parser.add_argument("--train-data", type=Path, default=PROJECT_ROOT / "data" / "vpesg4k_train_1000.json")
     parser.add_argument(
         "--validation-data",
@@ -677,6 +725,7 @@ def main() -> None:
             max_len=args.max_len,
             batch_size=args.batch_size,
             device_name=args.device,
+            metrics_output=args.metrics_output,
         )
     else:
         if args.model_path.exists():
@@ -707,6 +756,7 @@ def main() -> None:
             learning_rate=args.learning_rate,
             seed=args.seed,
             device_name=args.device,
+            metrics_output=args.metrics_output,
         )
 
     submission_rows = build_submission_rows(target_rows, predictions)
