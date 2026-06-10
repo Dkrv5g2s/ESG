@@ -5,6 +5,7 @@ import csv
 import json
 import random
 import urllib.request
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -224,6 +225,49 @@ def format_task_name(field: str) -> str:
     return TASK_DISPLAY_NAMES[field]
 
 
+def format_score_report(
+    title: str,
+    scores: dict[str, Any] | None,
+    epoch: int | None = None,
+) -> str:
+    if not scores:
+        return f"{title}: unavailable"
+
+    lines = [title]
+    if epoch:
+        lines.append(f"  epoch: {epoch}")
+    if "final_weighted_score" in scores:
+        lines.append(f"  weighted_score: {float(scores['final_weighted_score']):.4f}")
+    for field in TASK_REPORT_ORDER:
+        if field in scores:
+            lines.append(f"  {field}: {float(scores[field]):.4f}")
+    return "\n".join(lines)
+
+
+def print_score_report(
+    title: str,
+    scores: dict[str, Any] | None,
+    epoch: int | None = None,
+) -> None:
+    print(format_score_report(title, scores, epoch=epoch))
+
+
+def format_prediction_distribution(
+    rows: list[dict[str, Any]],
+    title: str = "Submission prediction distribution",
+) -> str:
+    lines = [title]
+    for field, labels in EVAL_FIELDS.items():
+        counts = Counter(normalize_value(row.get(field, "")) for row in rows)
+        visible = [f"{label}={counts[label]}" for label in labels if counts[label] > 0]
+        lines.append(f"  {field}: {', '.join(visible) if visible else 'none'}")
+    return "\n".join(lines)
+
+
+def print_prediction_distribution(rows: list[dict[str, Any]]) -> None:
+    print(format_prediction_distribution(rows))
+
+
 def require_training_labels(rows: list[dict[str, Any]]) -> None:
     missing = []
     for index, row in enumerate(rows):
@@ -395,6 +439,7 @@ def evaluate_predictions(gt_rows, predictions) -> dict[str, Any]:
 
 def train_and_predict(
     train_rows: list[dict[str, Any]],
+    validation_rows: list[dict[str, Any]],
     target_rows: list[dict[str, Any]],
     *,
     model_name: str,
@@ -403,45 +448,36 @@ def train_and_predict(
     batch_size: int,
     epochs: int,
     learning_rate: float,
-    validation_size: float,
     seed: int,
     device_name: str,
 ):
     import torch
-    from sklearn.model_selection import train_test_split
     from torch.utils.data import DataLoader
     from transformers import AutoTokenizer, get_linear_schedule_with_warmup
 
     require_training_labels(train_rows)
+    if validation_rows:
+        require_training_labels(validation_rows)
     seed_everything(seed)
     device = resolve_device(device_name)
     label2id, id2label = build_label_maps()
     num_labels = {field: len(labels) for field, labels in EVAL_FIELDS.items()}
-
-    if validation_size > 0:
-        train_split, valid_split = train_test_split(
-            train_rows,
-            test_size=validation_size,
-            random_state=seed,
-        )
-    else:
-        train_split, valid_split = train_rows, []
 
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     ESGDataset = make_dataset_class(max_len)
     MultiTaskClassifier = make_model_class(model_name)
 
     train_loader = DataLoader(
-        ESGDataset(train_split, tokenizer, label2id),
+        ESGDataset(train_rows, tokenizer, label2id),
         batch_size=batch_size,
         shuffle=True,
         collate_fn=collate_batch,
         pin_memory=uses_cuda(device),
     )
     valid_loader = None
-    if valid_split:
+    if validation_rows:
         valid_loader = DataLoader(
-            ESGDataset(valid_split, tokenizer),
+            ESGDataset(validation_rows, tokenizer),
             batch_size=batch_size,
             shuffle=False,
             collate_fn=collate_batch,
@@ -458,9 +494,11 @@ def train_and_predict(
     )
 
     best_score = -1.0
+    best_epoch = 0
+    best_scores = None
     best_state = None
     print(f"Device: {device}")
-    print(f"Train rows: {len(train_split)}; validation rows: {len(valid_split)}")
+    print(f"Train rows: {len(train_rows)}; validation rows: {len(validation_rows)}")
 
     for epoch in range(1, epochs + 1):
         print(f"Epoch {epoch}/{epochs}")
@@ -469,10 +507,11 @@ def train_and_predict(
 
         if valid_loader is None:
             best_state = model.state_dict()
+            best_epoch = epoch
             continue
 
         valid_predictions = predict_batches(model, valid_loader, device, id2label)
-        scores = evaluate_predictions(valid_split, valid_predictions)
+        scores = evaluate_predictions(validation_rows, valid_predictions)
         score = scores["final_weighted_score"]
         print(f"  validation weighted macro F1={score:.5f}")
         for field in TASK_REPORT_ORDER:
@@ -480,14 +519,19 @@ def train_and_predict(
 
         if score > best_score:
             best_score = score
+            best_scores = dict(scores)
             best_state = {
                 key: value.detach().cpu().clone()
                 for key, value in model.state_dict().items()
             }
+            best_epoch = epoch
             print(f"  saved best checkpoint in memory: {best_score:.5f}")
 
     if best_state is not None:
         model.load_state_dict(best_state)
+
+    if best_scores is not None:
+        print_score_report("Best validation result", best_scores, epoch=best_epoch)
 
     model_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
@@ -496,6 +540,9 @@ def train_and_predict(
             "model_name": model_name,
             "max_len": max_len,
             "num_labels": num_labels,
+            "best_epoch": best_epoch,
+            "validation_rows": len(validation_rows),
+            "best_scores": best_scores,
         },
         model_path,
     )
@@ -528,6 +575,11 @@ def predict_with_checkpoint(
     checkpoint = torch.load(model_path, map_location=device)
     checkpoint_model_name = checkpoint.get("model_name", model_name)
     checkpoint_max_len = int(checkpoint.get("max_len", max_len))
+    print_score_report(
+        "Checkpoint validation result",
+        checkpoint.get("best_scores"),
+        epoch=checkpoint.get("best_epoch"),
+    )
 
     _, id2label = build_label_maps()
     num_labels = {field: len(labels) for field, labels in EVAL_FIELDS.items()}
@@ -564,6 +616,19 @@ def default_target_path(project_root: Path = PROJECT_ROOT) -> Path:
     return candidates[0]
 
 
+def default_validation_path(project_root: Path = PROJECT_ROOT) -> Path | None:
+    candidates = [
+        project_root / "data" / "vpesg4k_val_1000.json",
+        project_root / "data" / "vpesg4k_val_1000.csv",
+        project_root / "vpesg4k_val_1000.json",
+        project_root / "vpesg4k_val_1000.csv",
+    ]
+    for path in candidates:
+        if path.exists():
+            return path
+    return None
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Create an AI CUP VeriPromiseESG submission CSV."
@@ -571,15 +636,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--target", type=Path, default=default_target_path())
     parser.add_argument("--output", type=Path, default=PROJECT_ROOT / "outputs" / "submission.csv")
     parser.add_argument("--train-data", type=Path, default=PROJECT_ROOT / "data" / "vpesg4k_train_1000.json")
+    parser.add_argument(
+        "--validation-data",
+        type=Path,
+        default=default_validation_path(),
+        help="Labeled validation data used only for scoring.",
+    )
+    parser.add_argument(
+        "--no-validation-data",
+        action="store_true",
+        help="Train without validation scoring.",
+    )
     parser.add_argument("--model-path", type=Path, default=PROJECT_ROOT / "models" / "baseline_reference.pt")
     parser.add_argument("--model-name", default="bert-base-chinese")
     parser.add_argument("--max-len", type=int, default=256)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--learning-rate", type=float, default=2e-5)
-    parser.add_argument("--validation-size", type=float, default=0.2)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
+    parser.add_argument("--force-train", action="store_true")
     parser.add_argument(
         "--no-download-train",
         action="store_true",
@@ -592,7 +668,7 @@ def main() -> None:
     args = parse_args()
     target_rows = load_rows(args.target)
 
-    if args.model_path.exists():
+    if args.model_path.exists() and not args.force_train:
         print(f"Found model checkpoint: {args.model_path}")
         predictions = predict_with_checkpoint(
             target_rows,
@@ -603,13 +679,25 @@ def main() -> None:
             device_name=args.device,
         )
     else:
-        print(f"Model checkpoint not found: {args.model_path}")
+        if args.model_path.exists():
+            print(f"Ignoring existing model checkpoint because --force-train was set: {args.model_path}")
+        else:
+            print(f"Model checkpoint not found: {args.model_path}")
         print("Training a new model, then generating the submission CSV.")
         if not args.no_download_train:
             download_train_data(args.train_data)
         train_rows = load_rows(args.train_data)
+        validation_rows = []
+        if not args.no_validation_data and args.validation_data is not None:
+            validation_rows = load_rows(args.validation_data)
+            print(f"Validation data: {args.validation_data}")
+        elif args.no_validation_data:
+            print("Validation data disabled; training will run for all epochs.")
+        else:
+            print("Validation data not found; training will run for all epochs.")
         predictions = train_and_predict(
             train_rows,
+            validation_rows,
             target_rows,
             model_name=args.model_name,
             model_path=args.model_path,
@@ -617,7 +705,6 @@ def main() -> None:
             batch_size=args.batch_size,
             epochs=args.epochs,
             learning_rate=args.learning_rate,
-            validation_size=args.validation_size,
             seed=args.seed,
             device_name=args.device,
         )
@@ -626,6 +713,7 @@ def main() -> None:
     write_submission_csv(submission_rows, args.output)
     print(f"Submission CSV written to: {args.output}")
     print(f"Rows: {len(submission_rows)}")
+    print_prediction_distribution(submission_rows)
 
 
 if __name__ == "__main__":

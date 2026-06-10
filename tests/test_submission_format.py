@@ -16,6 +16,7 @@ import ours as ours_module  # noqa: E402
 from baseline_reference import (  # noqa: E402
     SUBMISSION_COLUMNS,
     build_submission_rows,
+    default_validation_path as baseline_default_validation_path,
     default_target_path,
     format_task_name,
     resolve_device,
@@ -23,6 +24,12 @@ from baseline_reference import (  # noqa: E402
     write_submission_csv,
 )
 from ours import build_class_weights, build_stratify_labels  # noqa: E402
+from ours import (  # noqa: E402
+    apply_prediction_constraints,
+    default_validation_path,
+    format_prediction_distribution,
+    format_score_report,
+)
 
 
 class FakeCuda:
@@ -67,6 +74,98 @@ class SubmissionFormatTest(unittest.TestCase):
         weights = build_class_weights(rows, "promise_status", {"Yes": 0, "No": 1})
 
         self.assertLess(weights[0], weights[1])
+
+    def test_build_class_weights_can_smooth_and_cap_extreme_rare_labels(self):
+        rows = [{"evidence_quality": "Clear"} for _ in range(552)]
+        rows += [{"evidence_quality": "N/A"} for _ in range(323)]
+        rows += [{"evidence_quality": "Not Clear"} for _ in range(124)]
+        rows += [{"evidence_quality": "Misleading"}]
+        label2id = {
+            "Clear": 0,
+            "Not Clear": 1,
+            "Misleading": 2,
+            "N/A": 3,
+        }
+
+        weights = build_class_weights(
+            rows,
+            "evidence_quality",
+            label2id,
+            mode="sqrt",
+            max_weight=8.0,
+        )
+
+        self.assertGreater(weights[label2id["Misleading"]], weights[label2id["Clear"]])
+        self.assertLessEqual(weights[label2id["Misleading"]], 8.0)
+
+    def test_apply_prediction_constraints_keeps_downstream_tasks_consistent(self):
+        constrained = apply_prediction_constraints(
+            {
+                "promise_status": "No",
+                "verification_timeline": "already",
+                "evidence_status": "Yes",
+                "evidence_quality": "Clear",
+            }
+        )
+
+        self.assertEqual(constrained["verification_timeline"], "N/A")
+        self.assertEqual(constrained["evidence_status"], "N/A")
+        self.assertEqual(constrained["evidence_quality"], "N/A")
+
+    def test_apply_prediction_constraints_resets_quality_without_evidence(self):
+        constrained = apply_prediction_constraints(
+            {
+                "promise_status": "Yes",
+                "verification_timeline": "already",
+                "evidence_status": "No",
+                "evidence_quality": "Clear",
+            }
+        )
+
+        self.assertEqual(constrained["verification_timeline"], "already")
+        self.assertEqual(constrained["evidence_status"], "No")
+        self.assertEqual(constrained["evidence_quality"], "N/A")
+
+    def test_format_score_report_includes_weighted_score_and_task_scores(self):
+        report = format_score_report(
+            "Best validation result",
+            {
+                "final_weighted_score": 0.5421278,
+                "promise_status": 0.7447,
+                "evidence_status": 0.6069,
+                "evidence_quality": 0.3976,
+                "verification_timeline": 0.4797,
+            },
+            epoch=9,
+        )
+
+        self.assertIn("Best validation result", report)
+        self.assertIn("epoch: 9", report)
+        self.assertIn("weighted_score: 0.5421", report)
+        self.assertIn("promise_status: 0.7447", report)
+        self.assertIn("evidence_quality: 0.3976", report)
+
+    def test_format_prediction_distribution_counts_submission_labels(self):
+        report = format_prediction_distribution(
+            [
+                {
+                    "promise_status": "Yes",
+                    "evidence_status": "Yes",
+                    "evidence_quality": "Clear",
+                    "verification_timeline": "already",
+                },
+                {
+                    "promise_status": "No",
+                    "evidence_status": "N/A",
+                    "evidence_quality": "N/A",
+                    "verification_timeline": "N/A",
+                },
+            ]
+        )
+
+        self.assertIn("Submission prediction distribution", report)
+        self.assertIn("promise_status: Yes=1, No=1", report)
+        self.assertIn("evidence_quality: Clear=1, N/A=1", report)
 
     def test_build_stratify_labels_uses_combined_eval_fields_when_repeated(self):
         rows = [
@@ -118,6 +217,34 @@ class SubmissionFormatTest(unittest.TestCase):
 
             self.assertEqual(default_target_path(project_root), test_target)
             self.assertEqual(ours_module.default_target_path(project_root), test_target)
+
+    def test_ours_defaults_target_4090_training_without_reusing_old_checkpoint(self):
+        with patch.object(sys, "argv", ["ours.py"]):
+            args = ours_module.parse_args()
+
+        self.assertEqual(args.model_path, PROJECT_ROOT / "models" / "ours_4090.pt")
+        self.assertEqual(args.model_name, "hfl/chinese-roberta-wwm-ext-large")
+        self.assertEqual(args.max_len, 512)
+        self.assertEqual(args.batch_size, 16)
+        self.assertEqual(args.pooling, "mean")
+        self.assertEqual(args.class_weight_mode, "sqrt")
+        self.assertFalse(args.no_mixed_precision)
+        self.assertEqual(args.validation_data, default_validation_path())
+        self.assertFalse(hasattr(args, "extra_train_data"))
+        self.assertFalse(hasattr(args, "no_final_train_all_data"))
+
+    def test_default_validation_path_prefers_validation_json_in_data_directory(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            project_root = Path(tmp_dir)
+            data_dir = project_root / "data"
+            data_dir.mkdir()
+            val_json = data_dir / "vpesg4k_val_1000.json"
+            val_csv = data_dir / "vpesg4k_val_1000.csv"
+            val_json.write_text("[]", encoding="utf-8")
+            val_csv.write_text("", encoding="utf-8")
+
+            self.assertEqual(default_validation_path(project_root), val_json)
+            self.assertEqual(baseline_default_validation_path(project_root), val_json)
 
     def test_resolve_device_rejects_cuda_when_torch_has_no_cuda_support(self):
         with patch.dict(sys.modules, {"torch": FakeTorch}):
@@ -277,6 +404,150 @@ class SubmissionFormatTest(unittest.TestCase):
             download_mock.assert_called_once_with(train_path)
             train_mock.assert_called_once()
             predict_mock.assert_not_called()
+            self.assertTrue(output_path.exists())
+
+    def test_baseline_main_trains_on_train_rows_validates_on_validation_rows_and_outputs_target(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            train_path = tmp_path / "train.json"
+            validation_path = tmp_path / "validation.json"
+            target_path = tmp_path / "test.json"
+            output_path = tmp_path / "submission.csv"
+            model_path = tmp_path / "missing-model.pt"
+            train_path.write_text(
+                """[
+                    {
+                        "id": "train",
+                        "data": "訓練",
+                        "promise_status": "No",
+                        "verification_timeline": "N/A",
+                        "evidence_status": "N/A",
+                        "evidence_quality": "N/A"
+                    }
+                ]""",
+                encoding="utf-8",
+            )
+            validation_path.write_text(
+                """[
+                    {
+                        "id": "validation",
+                        "data": "驗證",
+                        "promise_status": "No",
+                        "verification_timeline": "N/A",
+                        "evidence_status": "N/A",
+                        "evidence_quality": "N/A"
+                    }
+                ]""",
+                encoding="utf-8",
+            )
+            target_path.write_text('[{"id": "test", "data": "測試"}]', encoding="utf-8")
+
+            argv = [
+                "baseline_reference.py",
+                "--target",
+                str(target_path),
+                "--train-data",
+                str(train_path),
+                "--validation-data",
+                str(validation_path),
+                "--output",
+                str(output_path),
+                "--model-path",
+                str(model_path),
+                "--no-download-train",
+            ]
+            predictions = [
+                {
+                    "promise_status": "No",
+                    "verification_timeline": "N/A",
+                    "evidence_status": "N/A",
+                    "evidence_quality": "N/A",
+                }
+            ]
+
+            with patch.object(sys, "argv", argv), patch.object(
+                baseline_reference,
+                "train_and_predict",
+                return_value=predictions,
+            ) as train_mock:
+                baseline_reference.main()
+
+            train_args = train_mock.call_args.args
+            self.assertEqual(train_args[0][0]["id"], "train")
+            self.assertEqual(train_args[1][0]["id"], "validation")
+            self.assertEqual(train_args[2][0]["id"], "test")
+            self.assertTrue(output_path.exists())
+
+    def test_ours_main_trains_on_train_rows_validates_on_validation_rows_and_outputs_target(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            train_path = tmp_path / "train.json"
+            validation_path = tmp_path / "validation.json"
+            target_path = tmp_path / "test.json"
+            output_path = tmp_path / "submission.csv"
+            model_path = tmp_path / "missing-model.pt"
+            train_path.write_text(
+                """[
+                    {
+                        "id": "train",
+                        "data": "訓練",
+                        "promise_status": "No",
+                        "verification_timeline": "N/A",
+                        "evidence_status": "N/A",
+                        "evidence_quality": "N/A"
+                    }
+                ]""",
+                encoding="utf-8",
+            )
+            validation_path.write_text(
+                """[
+                    {
+                        "id": "validation",
+                        "data": "驗證",
+                        "promise_status": "No",
+                        "verification_timeline": "N/A",
+                        "evidence_status": "N/A",
+                        "evidence_quality": "N/A"
+                    }
+                ]""",
+                encoding="utf-8",
+            )
+            target_path.write_text('[{"id": "test", "data": "測試"}]', encoding="utf-8")
+
+            argv = [
+                "ours.py",
+                "--target",
+                str(target_path),
+                "--train-data",
+                str(train_path),
+                "--validation-data",
+                str(validation_path),
+                "--output",
+                str(output_path),
+                "--model-path",
+                str(model_path),
+                "--no-download-train",
+            ]
+            predictions = [
+                {
+                    "promise_status": "No",
+                    "verification_timeline": "N/A",
+                    "evidence_status": "N/A",
+                    "evidence_quality": "N/A",
+                }
+            ]
+
+            with patch.object(sys, "argv", argv), patch.object(
+                ours_module,
+                "train_and_predict",
+                return_value=predictions,
+            ) as train_mock:
+                ours_module.main()
+
+            train_args = train_mock.call_args.args
+            self.assertEqual(train_args[0][0]["id"], "train")
+            self.assertEqual(train_args[1][0]["id"], "validation")
+            self.assertEqual(train_args[2][0]["id"], "test")
             self.assertTrue(output_path.exists())
 
 

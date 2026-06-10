@@ -31,18 +31,3 @@ Thumbs.db
 desktop.ini
 .idea/
 .vscode/
-
-# Model checkpoints
-models/
-*.pt
-*.pth
-*.ckpt
-*.safetensors
-
-# Generated analysis images
-label_distribution.png
-training_curve.png
-f1_scores.png
-
-# Logs
-*.log
