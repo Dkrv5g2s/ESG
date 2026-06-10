@@ -125,17 +125,6 @@ def normalize_value(value: Any) -> str:
     return str(value)
 
 
-def copy_existing_or_default_predictions(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
-    predictions = []
-    for row in rows:
-        prediction = {}
-        for field, labels in EVAL_FIELDS.items():
-            value = normalize_value(row.get(field, ""))
-            prediction[field] = value if value in labels else DEFAULT_PREDICTIONS[field]
-        predictions.append(apply_prediction_constraints(prediction))
-    return predictions
-
-
 def apply_prediction_constraints(prediction: dict[str, Any]) -> dict[str, str]:
     constrained = {
         field: normalize_value(prediction.get(field, DEFAULT_PREDICTIONS[field]))
@@ -186,33 +175,6 @@ def write_submission_csv(rows: list[dict[str, str]], output_path: Path) -> None:
         )
         writer.writeheader()
         writer.writerows(rows)
-
-
-def write_validation_metrics_json(
-    scores: dict[str, Any] | None,
-    output_path: Path,
-    *,
-    epoch: int | None = None,
-    validation_rows: int = 0,
-) -> None:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    metrics = {
-        "best_epoch": epoch,
-        "validation_rows": validation_rows,
-        "weighted_score": None,
-        "task_f1": {},
-    }
-    if scores:
-        metrics["weighted_score"] = scores.get("final_weighted_score")
-        metrics["task_f1"] = {
-            field: scores[field]
-            for field in TASK_REPORT_ORDER
-            if field in scores
-        }
-    output_path.write_text(
-        json.dumps(metrics, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
 
 
 def seed_everything(seed: int) -> None:
@@ -307,33 +269,6 @@ def format_task_name(field: str) -> str:
     return TASK_DISPLAY_NAMES[field]
 
 
-def format_score_report(
-    title: str,
-    scores: dict[str, Any] | None,
-    epoch: int | None = None,
-) -> str:
-    if not scores:
-        return f"{title}: unavailable"
-
-    lines = [title]
-    if epoch:
-        lines.append(f"  epoch: {epoch}")
-    if "final_weighted_score" in scores:
-        lines.append(f"  weighted_score: {float(scores['final_weighted_score']):.4f}")
-    for field in TASK_REPORT_ORDER:
-        if field in scores:
-            lines.append(f"  {field}: {float(scores[field]):.4f}")
-    return "\n".join(lines)
-
-
-def print_score_report(
-    title: str,
-    scores: dict[str, Any] | None,
-    epoch: int | None = None,
-) -> None:
-    print(format_score_report(title, scores, epoch=epoch))
-
-
 def format_prediction_distribution(
     rows: list[dict[str, Any]],
     title: str = "Submission prediction distribution",
@@ -388,17 +323,6 @@ def build_class_weights(
             weight = min(weight, max_weight)
         weights[index] = weight
     return weights
-
-
-def build_stratify_labels(rows: list[dict[str, Any]]) -> list[str] | None:
-    labels = [
-        "|".join(normalize_value(row.get(field, "")) for field in EVAL_FIELDS)
-        for row in rows
-    ]
-    counts = Counter(labels)
-    if labels and min(counts.values()) >= 2:
-        return labels
-    return None
 
 
 def make_dataset_class(max_len: int):
@@ -615,26 +539,8 @@ def predict_batches(
     return predictions
 
 
-def evaluate_predictions(gt_rows, predictions) -> dict[str, Any]:
-    from sklearn.metrics import f1_score
-
-    weighted_score = 0.0
-    results = {}
-
-    for field, labels in EVAL_FIELDS.items():
-        y_true = [row[field] for row in gt_rows]
-        y_pred = [row[field] for row in predictions]
-        macro_f1 = f1_score(y_true, y_pred, labels=labels, average="macro", zero_division=0)
-        weighted_score += macro_f1 * FIELD_WEIGHTS[field]
-        results[field] = macro_f1
-
-    results["final_weighted_score"] = weighted_score
-    return results
-
-
 def train_and_predict(
     train_rows: list[dict[str, Any]],
-    validation_rows: list[dict[str, Any]],
     target_rows: list[dict[str, Any]],
     *,
     model_name: str,
@@ -649,23 +555,18 @@ def train_and_predict(
     head_hidden_size: int,
     weight_decay: float,
     warmup_ratio: float,
-    early_stopping_patience: int,
-    min_delta: float,
     pooling: str,
     class_weight_mode: str,
     max_class_weight: float,
     label_smoothing: float,
     use_mixed_precision: bool,
     apply_constraints: bool,
-    metrics_output: Path | None,
 ):
     import torch
     from torch.utils.data import DataLoader
     from transformers import AutoTokenizer, get_linear_schedule_with_warmup
 
     require_training_labels(train_rows)
-    if validation_rows:
-        require_training_labels(validation_rows)
     seed_everything(seed)
     device = resolve_device(device_name)
     configure_torch_runtime(device)
@@ -683,15 +584,6 @@ def train_and_predict(
         collate_fn=collate_batch,
         pin_memory=uses_cuda(device),
     )
-    valid_loader = None
-    if validation_rows:
-        valid_loader = DataLoader(
-            ESGDataset(validation_rows, tokenizer),
-            batch_size=batch_size,
-            shuffle=False,
-            collate_fn=collate_batch,
-            pin_memory=uses_cuda(device),
-        )
 
     model = MultiTaskClassifier(
         num_labels,
@@ -719,18 +611,10 @@ def train_and_predict(
     )
     scaler = make_grad_scaler(device, use_mixed_precision)
 
-    best_score = -1.0
-    best_epoch = 0
-    best_scores = None
-    best_state = None
-    epochs_without_improvement = 0
     print(f"Device: {device}")
-    print(f"Train rows: {len(train_rows)}; validation rows: {len(validation_rows)}")
-    print(
-        f"Model: {model_name}; pooling: {pooling}; "
-        f"class weights: {class_weight_mode}; mixed precision: "
-        f"{use_mixed_precision and uses_cuda(device)}"
-    )
+    print(f"Train rows (merged): {len(train_rows)}")
+    print(f"Model: {model_name}; pooling: {pooling}; epochs: {epochs} (fixed, no early stopping)")
+    print(f"Class weights: {class_weight_mode}; mixed precision: {use_mixed_precision and uses_cuda(device)}")
 
     for epoch in range(1, epochs + 1):
         print(f"Epoch {epoch}/{epochs}")
@@ -746,61 +630,6 @@ def train_and_predict(
         )
         print(f"  average loss={avg_loss:.4f}")
 
-        if valid_loader is None:
-            best_state = {
-                key: value.detach().cpu().clone()
-                for key, value in model.state_dict().items()
-            }
-            best_epoch = epoch
-            continue
-
-        valid_predictions = predict_batches(
-            model,
-            valid_loader,
-            device,
-            id2label,
-            use_mixed_precision=use_mixed_precision,
-            apply_constraints=apply_constraints,
-        )
-        scores = evaluate_predictions(validation_rows, valid_predictions)
-        score = scores["final_weighted_score"]
-        print(f"  validation weighted macro F1={score:.5f}")
-        for field in TASK_REPORT_ORDER:
-            print(f"    {format_task_name(field)}: {scores[field]:.5f}")
-
-        if score > best_score + min_delta:
-            best_score = score
-            best_scores = dict(scores)
-            best_state = {
-                key: value.detach().cpu().clone()
-                for key, value in model.state_dict().items()
-            }
-            best_epoch = epoch
-            epochs_without_improvement = 0
-            print(f"  saved best checkpoint in memory: {best_score:.5f}")
-        else:
-            epochs_without_improvement += 1
-            if early_stopping_patience > 0 and epochs_without_improvement >= early_stopping_patience:
-                print(
-                    "  early stopping: validation score did not improve for "
-                    f"{early_stopping_patience} epochs"
-                )
-                break
-
-    if best_state is not None:
-        model.load_state_dict(best_state)
-
-    if best_scores is not None:
-        print_score_report("Best validation result", best_scores, epoch=best_epoch)
-    if metrics_output is not None:
-        write_validation_metrics_json(
-            best_scores,
-            metrics_output,
-            epoch=best_epoch or None,
-            validation_rows=len(validation_rows),
-        )
-        print(f"Validation metrics written to: {metrics_output}")
-
     model_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
         {
@@ -811,12 +640,11 @@ def train_and_predict(
             "dropout_rate": dropout_rate,
             "head_hidden_size": head_hidden_size,
             "pooling": pooling,
-            "best_epoch": best_epoch,
+            "epochs": epochs,
             "class_weight_mode": class_weight_mode,
             "max_class_weight": max_class_weight,
             "label_smoothing": label_smoothing,
-            "validation_rows": len(validation_rows),
-            "best_scores": best_scores,
+            "train_rows": len(train_rows),
         },
         model_path,
     )
@@ -849,7 +677,6 @@ def predict_with_checkpoint(
     device_name: str,
     use_mixed_precision: bool,
     apply_constraints: bool,
-    metrics_output: Path | None,
 ):
     import torch
     from torch.utils.data import DataLoader
@@ -863,21 +690,9 @@ def predict_with_checkpoint(
     checkpoint_dropout_rate = float(checkpoint.get("dropout_rate", 0.1))
     checkpoint_head_hidden_size = int(checkpoint.get("head_hidden_size", 0))
     checkpoint_pooling = checkpoint.get("pooling", "cls")
-    checkpoint_scores = checkpoint.get("best_scores")
-    checkpoint_epoch = checkpoint.get("best_epoch")
-    print_score_report(
-        "Checkpoint validation result",
-        checkpoint_scores,
-        epoch=checkpoint_epoch,
-    )
-    if metrics_output is not None:
-        write_validation_metrics_json(
-            checkpoint_scores,
-            metrics_output,
-            epoch=checkpoint_epoch,
-            validation_rows=int(checkpoint.get("validation_rows", 0) or 0),
-        )
-        print(f"Validation metrics written to: {metrics_output}")
+
+    print(f"Checkpoint: model={checkpoint_model_name}, max_len={checkpoint_max_len}")
+    print(f"  trained on {checkpoint.get('train_rows', '?')} rows for {checkpoint.get('epochs', '?')} epochs")
 
     _, id2label = build_label_maps()
     num_labels = {field: len(labels) for field, labels in EVAL_FIELDS.items()}
@@ -914,10 +729,6 @@ def default_target_path(project_root: Path = PROJECT_ROOT) -> Path:
         project_root / "data" / "vpesg4k_test_2000.csv",
         project_root / "vpesg4k_test_2000.json",
         project_root / "vpesg4k_test_2000.csv",
-        project_root / "data" / "vpesg4k_val_1000.json",
-        project_root / "data" / "vpesg4k_val_1000.csv",
-        project_root / "vpesg4k_val_1000.json",
-        project_root / "vpesg4k_val_1000.csv",
     ]
     for path in candidates:
         if path.exists():
@@ -925,12 +736,14 @@ def default_target_path(project_root: Path = PROJECT_ROOT) -> Path:
     return candidates[0]
 
 
-def default_validation_path(project_root: Path = PROJECT_ROOT) -> Path | None:
+def default_train_path(project_root: Path = PROJECT_ROOT) -> Path:
+    return project_root / "data" / "vpesg4k_train_1000.json"
+
+
+def default_val_path(project_root: Path = PROJECT_ROOT) -> Path | None:
     candidates = [
         project_root / "data" / "vpesg4k_val_1000.json",
         project_root / "data" / "vpesg4k_val_1000.csv",
-        project_root / "vpesg4k_val_1000.json",
-        project_root / "vpesg4k_val_1000.csv",
     ]
     for path in candidates:
         if path.exists():
@@ -940,42 +753,29 @@ def default_validation_path(project_root: Path = PROJECT_ROOT) -> Path | None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Create an AI CUP VeriPromiseESG submission CSV."
+        description=(
+            "Train on merged train+val data with fixed epochs (no early stopping), "
+            "then generate submission CSV."
+        )
     )
     parser.add_argument("--target", type=Path, default=default_target_path())
-    parser.add_argument("--output", type=Path, default=PROJECT_ROOT / "outputs" / "submission.csv")
-    parser.add_argument("--metrics-output", type=Path, default=PROJECT_ROOT / "outputs" / "validation_metrics.json")
-    parser.add_argument("--train-data", type=Path, default=PROJECT_ROOT / "data" / "vpesg4k_train_1000.json")
-    parser.add_argument(
-        "--validation-data",
-        type=Path,
-        default=default_validation_path(),
-        help="Labeled validation data used only for scoring and early stopping.",
-    )
-    parser.add_argument(
-        "--no-validation-data",
-        action="store_true",
-        help="Train without validation scoring or early stopping.",
-    )
-    parser.add_argument("--model-path", type=Path, default=PROJECT_ROOT / "models" / "ours.pt")
+    parser.add_argument("--output", type=Path, default=PROJECT_ROOT / "outputs" / "submission_merged.csv")
+    parser.add_argument("--train-data", type=Path, default=default_train_path())
+    parser.add_argument("--val-data", type=Path, default=default_val_path())
+    parser.add_argument("--model-path", type=Path, default=PROJECT_ROOT / "models" / "train_val_merge.pt")
     parser.add_argument("--model-name", default="hfl/chinese-roberta-wwm-ext")
     parser.add_argument("--max-len", type=int, default=256)
     parser.add_argument("--batch-size", type=int, default=8)
-    parser.add_argument("--epochs", type=int, default=15)
-    # KEY FIX: 3e-5 instead of 2e-5 to compensate for higher loss scale with class weights
+    # 根據 ours.py 實驗觀察到的最佳 epoch
+    parser.add_argument("--epochs", type=int, default=8)
     parser.add_argument("--learning-rate", type=float, default=3e-5)
     parser.add_argument("--weight-decay", type=float, default=0.01)
     parser.add_argument("--warmup-ratio", type=float, default=0.1)
     parser.add_argument("--dropout-rate", type=float, default=0.1)
     parser.add_argument("--head-hidden-size", type=int, default=0)
-    parser.add_argument("--early-stopping-patience", type=int, default=5)
-    parser.add_argument("--min-delta", type=float, default=0.0)
     parser.add_argument("--pooling", default="cls", choices=["cls", "mean"])
-    # KEY FIX: balanced instead of sqrt for more aggressive minority class boosting
     parser.add_argument("--class-weight-mode", default="balanced", choices=["balanced", "sqrt", "none"])
-    # KEY FIX: lower cap to avoid gradient instability from extreme weights
     parser.add_argument("--max-class-weight", type=float, default=3.0)
-    # KEY FIX: remove label smoothing — conflicts with class weights
     parser.add_argument("--label-smoothing", type=float, default=0.0)
     parser.add_argument("--no-class-weights", action="store_true")
     parser.add_argument("--apply-prediction-constraints", action="store_true", default=True)
@@ -986,7 +786,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--no-download-train",
         action="store_true",
-        help="Do not download training data automatically when the checkpoint does not exist.",
     )
     return parser.parse_args()
 
@@ -1008,28 +807,29 @@ def main() -> None:
             device_name=args.device,
             use_mixed_precision=use_mixed_precision,
             apply_constraints=args.apply_prediction_constraints,
-            metrics_output=args.metrics_output,
         )
     else:
         if args.model_path.exists():
-            print(f"Ignoring existing model checkpoint because --force-train was set: {args.model_path}")
+            print(f"Ignoring existing checkpoint because --force-train was set: {args.model_path}")
         else:
             print(f"Model checkpoint not found: {args.model_path}")
-        print("Training a new model, then generating the submission CSV.")
+
         if not args.no_download_train:
             download_train_data(args.train_data)
+
         train_rows = load_rows(args.train_data)
-        validation_rows = []
-        if not args.no_validation_data and args.validation_data is not None:
-            validation_rows = load_rows(args.validation_data)
-            print(f"Validation data: {args.validation_data}")
-        elif args.no_validation_data:
-            print("Validation data disabled; training will run for all epochs.")
+
+        # 合併 val 資料
+        if args.val_data is not None and args.val_data.exists():
+            val_rows = load_rows(args.val_data)
+            merged_rows = train_rows + val_rows
+            print(f"Merging train({len(train_rows)}) + val({len(val_rows)}) = {len(merged_rows)} rows")
         else:
-            print("Validation data not found; training will run for all epochs.")
+            merged_rows = train_rows
+            print(f"Val data not found, training on train only: {len(merged_rows)} rows")
+
         predictions = train_and_predict(
-            train_rows,
-            validation_rows,
+            merged_rows,
             target_rows,
             model_name=args.model_name,
             model_path=args.model_path,
@@ -1043,15 +843,12 @@ def main() -> None:
             head_hidden_size=args.head_hidden_size,
             weight_decay=args.weight_decay,
             warmup_ratio=args.warmup_ratio,
-            early_stopping_patience=args.early_stopping_patience,
-            min_delta=args.min_delta,
             pooling=args.pooling,
             class_weight_mode=class_weight_mode,
             max_class_weight=args.max_class_weight,
             label_smoothing=args.label_smoothing,
             use_mixed_precision=use_mixed_precision,
             apply_constraints=args.apply_prediction_constraints,
-            metrics_output=args.metrics_output,
         )
 
     submission_rows = build_submission_rows(target_rows, predictions)
