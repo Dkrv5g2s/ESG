@@ -13,6 +13,11 @@ import experiment_runner as runner  # noqa: E402
 
 
 class ExperimentRunnerTest(unittest.TestCase):
+    def test_runner_is_standalone_and_does_not_import_ours(self):
+        source = (PROJECT_ROOT / "experiment_runner.py").read_text(encoding="utf-8")
+
+        self.assertNotIn("from ours import", source)
+
     def test_default_configs_include_merge_reference_settings(self):
         configs = {config.name: config for config in runner.default_experiment_configs()}
 
@@ -46,6 +51,9 @@ class ExperimentRunnerTest(unittest.TestCase):
             )
 
         self.assertIn("--force-train", command)
+        self.assertIn(str(PROJECT_ROOT / "experiment_runner.py"), command)
+        self.assertIn("--mode", command)
+        self.assertIn("single", command)
         self.assertIn("--no-merge-train-val-for-submission", command)
         self.assertNotIn("--final-epochs", command)
         self.assertIn("--apply-prediction-constraints", command)
