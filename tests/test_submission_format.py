@@ -246,7 +246,7 @@ class SubmissionFormatTest(unittest.TestCase):
             self.assertEqual(default_target_path(project_root), test_target)
             self.assertEqual(ours_module.default_target_path(project_root), test_target)
 
-    def test_ours_defaults_use_conservative_model_and_weight_tuning(self):
+    def test_ours_defaults_use_conservative_architecture_weight_tuning_and_merge(self):
         with patch.object(sys, "argv", ["ours.py"]):
             args = ours_module.parse_args()
 
@@ -255,11 +255,13 @@ class SubmissionFormatTest(unittest.TestCase):
         self.assertEqual(args.max_len, 256)
         self.assertEqual(args.batch_size, 8)
         self.assertEqual(args.pooling, "cls")
-        self.assertEqual(args.class_weight_mode, "sqrt")
-        self.assertEqual(args.max_class_weight, 4.0)
+        self.assertEqual(args.class_weight_mode, "balanced")
+        self.assertEqual(args.max_class_weight, 3.0)
         self.assertEqual(args.label_smoothing, 0.0)
         self.assertFalse(args.no_mixed_precision)
-        self.assertFalse(args.apply_prediction_constraints)
+        self.assertTrue(args.apply_prediction_constraints)
+        self.assertTrue(args.merge_train_val_for_submission)
+        self.assertEqual(args.final_epochs, 8)
         self.assertEqual(args.validation_data, default_validation_path())
         self.assertFalse(hasattr(args, "extra_train_data"))
         self.assertFalse(hasattr(args, "no_final_train_all_data"))
@@ -557,6 +559,7 @@ class SubmissionFormatTest(unittest.TestCase):
                 str(output_path),
                 "--model-path",
                 str(model_path),
+                "--no-merge-train-val-for-submission",
                 "--no-download-train",
             ]
             predictions = [
@@ -580,6 +583,231 @@ class SubmissionFormatTest(unittest.TestCase):
             self.assertEqual(train_args[1][0]["id"], "validation")
             self.assertEqual(train_args[2][0]["id"], "test")
             self.assertTrue(output_path.exists())
+
+    def test_ours_main_merges_train_and_validation_rows_for_final_submission_by_default(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            train_path = tmp_path / "train.json"
+            validation_path = tmp_path / "validation.json"
+            target_path = tmp_path / "test.json"
+            output_path = tmp_path / "submission.csv"
+            model_path = tmp_path / "missing-model.pt"
+            train_path.write_text(
+                """[
+                    {
+                        "id": "train",
+                        "data": "訓練",
+                        "promise_status": "No",
+                        "verification_timeline": "N/A",
+                        "evidence_status": "N/A",
+                        "evidence_quality": "N/A"
+                    }
+                ]""",
+                encoding="utf-8",
+            )
+            validation_path.write_text(
+                """[
+                    {
+                        "id": "validation",
+                        "data": "驗證",
+                        "promise_status": "Yes",
+                        "verification_timeline": "already",
+                        "evidence_status": "Yes",
+                        "evidence_quality": "Clear"
+                    }
+                ]""",
+                encoding="utf-8",
+            )
+            target_path.write_text('[{"id": "test", "data": "測試"}]', encoding="utf-8")
+
+            argv = [
+                "ours.py",
+                "--target",
+                str(target_path),
+                "--train-data",
+                str(train_path),
+                "--validation-data",
+                str(validation_path),
+                "--output",
+                str(output_path),
+                "--model-path",
+                str(model_path),
+                "--no-download-train",
+            ]
+            validation_predictions = [
+                {
+                    "promise_status": "No",
+                    "verification_timeline": "N/A",
+                    "evidence_status": "N/A",
+                    "evidence_quality": "N/A",
+                }
+            ]
+            merged_predictions = [
+                {
+                    "promise_status": "Yes",
+                    "verification_timeline": "already",
+                    "evidence_status": "Yes",
+                    "evidence_quality": "Clear",
+                }
+            ]
+
+            with patch.object(sys, "argv", argv), patch.object(
+                ours_module,
+                "train_and_predict",
+                side_effect=[validation_predictions, merged_predictions],
+            ) as train_mock:
+                ours_module.main()
+
+            self.assertEqual(train_mock.call_count, 2)
+            first_train_args = train_mock.call_args_list[0].args
+            self.assertEqual(first_train_args[0][0]["id"], "train")
+            self.assertEqual(first_train_args[1][0]["id"], "validation")
+            self.assertEqual(first_train_args[2][0]["id"], "test")
+
+            final_train_args = train_mock.call_args_list[1].args
+            self.assertEqual([row["id"] for row in final_train_args[0]], ["train", "validation"])
+            self.assertEqual(final_train_args[1], [])
+            self.assertEqual(final_train_args[2][0]["id"], "test")
+
+            with output_path.open("r", encoding="utf-8", newline="") as handle:
+                output_rows = list(csv.DictReader(handle))
+            self.assertEqual(output_rows[0]["promise_status"], "Yes")
+            self.assertEqual(output_rows[0]["evidence_quality"], "Clear")
+
+    def test_ours_merge_uses_fixed_merge_epochs_even_when_validation_best_epoch_differs(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            train_path = tmp_path / "train.json"
+            validation_path = tmp_path / "validation.json"
+            target_path = tmp_path / "test.json"
+            output_path = tmp_path / "submission.csv"
+            model_path = tmp_path / "missing-model.pt"
+            labeled_row = """
+                {
+                    "id": "%s",
+                    "data": "%s",
+                    "promise_status": "No",
+                    "verification_timeline": "N/A",
+                    "evidence_status": "N/A",
+                    "evidence_quality": "N/A"
+                }
+            """
+            train_path.write_text(f"[{labeled_row % ('train', '訓練')}]", encoding="utf-8")
+            validation_path.write_text(f"[{labeled_row % ('validation', '驗證')}]", encoding="utf-8")
+            target_path.write_text('[{"id": "test", "data": "測試"}]', encoding="utf-8")
+
+            argv = [
+                "ours.py",
+                "--target",
+                str(target_path),
+                "--train-data",
+                str(train_path),
+                "--validation-data",
+                str(validation_path),
+                "--output",
+                str(output_path),
+                "--model-path",
+                str(model_path),
+                "--no-download-train",
+            ]
+            predictions = [
+                {
+                    "promise_status": "No",
+                    "verification_timeline": "N/A",
+                    "evidence_status": "N/A",
+                    "evidence_quality": "N/A",
+                }
+            ]
+
+            with patch.object(sys, "argv", argv), patch.object(
+                ours_module,
+                "train_and_predict",
+                side_effect=[predictions, predictions],
+            ) as train_mock, patch.object(
+                ours_module,
+                "load_checkpoint_validation_metadata",
+                return_value={"best_epoch": 6},
+            ):
+                ours_module.main()
+
+            self.assertEqual(train_mock.call_args_list[1].kwargs["epochs"], 8)
+
+    def test_ours_retrains_existing_non_merge_checkpoint_when_merge_is_enabled(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            train_path = tmp_path / "train.json"
+            validation_path = tmp_path / "validation.json"
+            target_path = tmp_path / "test.json"
+            output_path = tmp_path / "submission.csv"
+            model_path = tmp_path / "old-ours.pt"
+            model_path.write_bytes(b"placeholder")
+            train_path.write_text(
+                """[
+                    {
+                        "id": "train",
+                        "data": "訓練",
+                        "promise_status": "No",
+                        "verification_timeline": "N/A",
+                        "evidence_status": "N/A",
+                        "evidence_quality": "N/A"
+                    }
+                ]""",
+                encoding="utf-8",
+            )
+            validation_path.write_text(
+                """[
+                    {
+                        "id": "validation",
+                        "data": "驗證",
+                        "promise_status": "No",
+                        "verification_timeline": "N/A",
+                        "evidence_status": "N/A",
+                        "evidence_quality": "N/A"
+                    }
+                ]""",
+                encoding="utf-8",
+            )
+            target_path.write_text('[{"id": "test", "data": "測試"}]', encoding="utf-8")
+
+            argv = [
+                "ours.py",
+                "--target",
+                str(target_path),
+                "--train-data",
+                str(train_path),
+                "--validation-data",
+                str(validation_path),
+                "--output",
+                str(output_path),
+                "--model-path",
+                str(model_path),
+                "--no-download-train",
+            ]
+            predictions = [
+                {
+                    "promise_status": "No",
+                    "verification_timeline": "N/A",
+                    "evidence_status": "N/A",
+                    "evidence_quality": "N/A",
+                }
+            ]
+
+            with patch.object(sys, "argv", argv), patch.object(
+                ours_module,
+                "checkpoint_is_current_submission_model",
+                return_value=False,
+            ), patch.object(
+                ours_module,
+                "train_and_predict",
+                side_effect=[predictions, predictions],
+            ) as train_mock, patch.object(
+                ours_module,
+                "predict_with_checkpoint",
+            ) as predict_mock:
+                ours_module.main()
+
+            self.assertEqual(train_mock.call_count, 2)
+            predict_mock.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -88,16 +88,57 @@ conda activate aicup-esg
 python ours.py
 ```
 
-改良版位於 `ours.py`，預設會使用 `hfl/chinese-roberta-wwm-ext`、256 token 長度、混合精度、較溫和的類別權重、官方驗證集 early stopping、weight decay、warmup ratio，以及多層分類頭。這版主要以調整 loss 與類別權重為主，不大改模型架構。權重預設儲存到 `models/ours.pt`。
+改良版位於 `ours.py`，預設會使用 `hfl/chinese-roberta-wwm-ext`、256 token 長度、CLS pooling、混合精度、類別權重、官方驗證集 early stopping、weight decay 與 warmup ratio。這版主要以調整 loss、類別權重與正式訓練資料用法為主，不大改模型架構。權重預設儲存到 `models/ours.pt`。
 
 執行邏輯同樣是：
 
 - 有 `models/ours.pt` 時，直接讀取模型並產生繳交檔。
-- 沒有 `models/ours.pt` 時，使用 `data/vpesg4k_train_1000.json` 訓練、使用 `data/vpesg4k_val_1000.json` 驗證並顯示分數，最後對競賽測試集產生繳交檔。
+- 沒有 `models/ours.pt` 時，先使用 `data/vpesg4k_train_1000.json` 訓練、使用 `data/vpesg4k_val_1000.json` 驗證並顯示分數；接著預設會合併 train+val，沿用 `train_val_merge.py` 的固定 8 epoch 設定重新訓練正式提交模型，最後對競賽測試集產生繳交檔。
 
-程式預設會自動選擇可用裝置；有 CUDA GPU 時會使用 GPU，否則會退回 CPU。`ours.py` 使用訓練集訓練模型，使用官方驗證集計算 weighted score 與各子任務分數並做 early stopping，測試集只用來推論並輸出 `outputs/submission.csv`。若已有舊權重但想重新訓練，可加上 `--force-train`。
+程式預設會自動選擇可用裝置；有 CUDA GPU 時會使用 GPU，否則會退回 CPU。`ours.py` 會先用訓練集訓練模型，使用官方驗證集計算 weighted score 與各子任務分數並做 early stopping；測試集沒有標籤，只用來推論並輸出 `outputs/submission.csv`。若已有舊權重但想重新訓練 merge 版，可加上 `--force-train`。
 
-執行結束時，terminal 會印出最佳驗證分數、各子任務分數，以及提交檔內各標籤的預測筆數分布；同樣的驗證分數會寫入 `outputs/validation_metrics.json`，方便保存與回報。
+執行結束時，terminal 會印出最佳驗證分數、各子任務分數、merge 最終訓練資訊，以及提交檔內各標籤的預測筆數分布；同樣的驗證分數會寫入 `outputs/validation_metrics.json`，方便保存與回報。若只想使用 train-only 的驗證最佳模型直接產生 submission，可加上 `--no-merge-train-val-for-submission`。
+
+## 大量實驗搜尋
+
+若要在 4090 電腦上長時間搜尋，可以使用 `experiment_runner.py`。這支程式不會直接用測試集分數調參；搜尋階段只看驗證集 F1，並用多 seed 的 robust score 排名，降低只挑到單次偶然高分的風險。最後才用前幾名設定做 train+val merge，輸出單模型 submission 與加權投票版 submission。
+
+建議先用 holdout 粗搜，減少一開始就對官方 val 過擬合：
+
+```powershell
+conda activate aicup-esg
+python experiment_runner.py --mode search --profile full --validation-strategy holdout --seeds 42 43 44 --device cuda
+```
+
+`--profile full` 會跑數百組以權重、學習率、dropout、label smoothing、是否套用一致性規則為主的組合；若你確定時間與顯存都足夠，可以改成 `--profile huge`，會額外嘗試較長 token 長度、小分類頭、warmup 與 weight decay 變體。每次執行會建立一個 `experiments/YYYYMMDD_HHMMSS/` 目錄，重點檔案如下：
+
+```text
+experiments/YYYYMMDD_HHMMSS/
+├─ configs.csv
+├─ search_results.csv
+├─ search_summary.csv
+├─ search/<config>/seed<seed>/train.log
+├─ search/<config>/seed<seed>/validation_metrics.json
+└─ final/submission_ensemble.csv
+```
+
+若要用搜尋排名前 8 名做正式 train+val merge 並輸出 ensemble：
+
+```powershell
+python experiment_runner.py --mode final --profile full --summary experiments\YYYYMMDD_HHMMSS\search_summary.csv --final-top-k 8 --final-seeds 42 43 44 45 46 --device cuda
+```
+
+也可以一次跑搜尋與 final：
+
+```powershell
+python experiment_runner.py --mode all --profile full --seeds 42 43 44 --final-top-k 8 --final-seeds 42 43 44 45 46 --device cuda
+```
+
+若想先確認會跑哪些指令、不實際訓練：
+
+```powershell
+python experiment_runner.py --mode search --profile quick --limit 3 --dry-run
+```
 
 ## 主要參數
 
@@ -113,20 +154,24 @@ python ours.py
 | `--model-name` | `bert-base-chinese` | Hugging Face 預訓練模型名稱；改良版預設為 `hfl/chinese-roberta-wwm-ext` |
 | `--max-len` | `256` | Tokenizer 最大長度 |
 | `--batch-size` | `8` | 批次大小 |
-| `--epochs` | `10` | 訓練回合數 |
-| `--learning-rate` | `2e-5` | 學習率 |
+| `--epochs` | `15` | 第一階段 train-only 訓練回合上限 |
+| `--learning-rate` | `3e-5` | 學習率 |
 | `--weight-decay` | `0.01` | AdamW 權重衰減 |
 | `--warmup-ratio` | `0.1` | 線性 warmup 比例 |
-| `--dropout-rate` | `0.2` | 分類頭 dropout |
-| `--head-hidden-size` | `256` | 分類頭隱藏層大小；設為 `0` 可退回單層分類頭 |
-| `--early-stopping-patience` | `3` | 驗證分數未改善幾個 epoch 後停止 |
+| `--dropout-rate` | `0.1` | 分類頭 dropout |
+| `--head-hidden-size` | `0` | 分類頭隱藏層大小；預設 `0` 代表單層分類頭 |
+| `--early-stopping-patience` | `5` | 驗證分數未改善幾個 epoch 後停止 |
 | `--min-delta` | `0.0` | 視為改善所需的最低分數差 |
 | `--pooling` | `cls` | 可選 `cls`、`mean` |
-| `--class-weight-mode` | `sqrt` | 類別權重模式，可選 `balanced`、`sqrt`、`none` |
-| `--max-class-weight` | `4.0` | 類別權重上限，避免單一稀有類別主導訓練 |
+| `--class-weight-mode` | `balanced` | 類別權重模式，可選 `balanced`、`sqrt`、`none` |
+| `--max-class-weight` | `3.0` | 類別權重上限，避免單一稀有類別主導訓練 |
 | `--label-smoothing` | `0.0` | 交叉熵 label smoothing |
 | `--no-class-weights` | 關閉 | 關閉類別權重 |
-| `--apply-prediction-constraints` | 關閉 | 推論後套用任務一致性規則；預設關閉 |
+| `--apply-prediction-constraints` | 開啟 | 推論後套用任務一致性規則；預設開啟 |
+| `--no-apply-prediction-constraints` | 關閉 | 關閉任務一致性規則 |
+| `--merge-train-val-for-submission` | 開啟 | 驗證後合併 train+val 重訓正式提交模型 |
+| `--no-merge-train-val-for-submission` | 關閉 | 不做正式 merge，直接使用驗證最佳模型產生 submission |
+| `--final-epochs` | `8` | 指定 merge 最終訓練 epoch；預設沿用 `train_val_merge.py` 的固定 8 epoch |
 | `--no-mixed-precision` | 關閉 | 關閉 CUDA 混合精度 |
 | `--force-train` | 關閉 | 即使已有權重檔仍重新訓練 |
 | `--device` | `auto` | 可選 `auto`、`cpu`、`cuda` |
